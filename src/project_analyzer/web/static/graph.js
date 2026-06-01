@@ -31,6 +31,7 @@ async function loadGraph(url) {
     }
 
     const graphStates = buildGraphStates(graph);
+    let currentMode = viewMode && viewMode.value === "method" ? "method" : "file";
 
     const cy = window.cytoscape({
       container: root,
@@ -147,28 +148,66 @@ async function loadGraph(url) {
             "target-arrow-color": "#7ee787",
           },
         },
+        {
+          selector: ".is-hidden",
+          style: {
+            display: "none",
+          },
+        },
       ],
     });
-
-    const initialMode = viewMode && viewMode.value === "method" ? "method" : "file";
-    applyGraphState(cy, graphStates[initialMode], true);
+    applyGraphState(cy, graphStates[currentMode], true);
 
     if (viewMode) {
       viewMode.addEventListener("change", () => {
-        const mode = viewMode.value === "file" ? "file" : "method";
-        showLoading(`Switching to ${mode === "file" ? "file" : "method"} view…`);
-        applyGraphState(cy, graphStates[mode], true);
+        currentMode = viewMode.value === "file" ? "file" : "method";
+        showLoading(`Switching to ${currentMode === "file" ? "file" : "method"} view…`);
+        applyGraphState(cy, graphStates[currentMode], true);
       });
     }
 
-    cy.on("select", "node", (event) => {
+    const focusNode = (event) => {
       const data = event.target.data();
-      sidebar.innerHTML = describeNode(data);
-    });
+      const focusedState = buildFocusedState(graphStates[currentMode], { type: "node", data });
+      if (!focusedState) {
+        sidebar.innerHTML = describeNode(data);
+        return;
+      }
+      applyFocus(cy, focusedState);
+      sidebar.innerHTML = describeNode(data, focusedState.summary.focus_label);
+    };
 
-    cy.on("select", "edge", (event) => {
+    const focusEdge = (event) => {
       const data = event.target.data();
-      sidebar.innerHTML = describeEdge(data);
+      const focusedState = buildFocusedState(graphStates[currentMode], { type: "edge", data });
+      if (!focusedState) {
+        sidebar.innerHTML = describeEdge(data);
+        return;
+      }
+      applyFocus(cy, focusedState);
+      sidebar.innerHTML = describeEdge(data, focusedState.summary.focus_label);
+    };
+
+    cy.on("tap", "node", focusNode);
+    cy.on("click", "node", focusNode);
+    cy.on("tap", "edge", focusEdge);
+    cy.on("click", "edge", focusEdge);
+
+    const clearFocus = (event) => {
+      if (event.target === cy) {
+        restoreFullGraph(cy, graphStates[currentMode]);
+      }
+    };
+    cy.on("tap", clearFocus);
+    cy.on("click", clearFocus);
+
+    document.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) {
+        return;
+      }
+      if (!root.contains(event.target)) {
+        restoreFullGraph(cy, graphStates[currentMode]);
+      }
     });
   } catch (error) {
     hideLoading();
@@ -341,6 +380,7 @@ function groupBy(items, keySelector) {
 function describeSummary(summary) {
   return `
     <div class="selection-list">
+      ${summary.focus_label ? `<div><strong>Focus</strong> ${escapeHtml(summary.focus_label)}</div>` : ""}
       <div><strong>Mode</strong> ${summary.mode === "file" ? "Files" : "Methods"}</div>
       <div><strong>Packages</strong> ${summary.package_count}</div>
       <div><strong>Files</strong> ${summary.file_count}</div>
@@ -354,9 +394,10 @@ function describeSummary(summary) {
   `;
 }
 
-function describeNode(data) {
+function describeNode(data, focusLabel) {
   return `
     <div class="selection-list">
+      ${focusLabel ? `<div><strong>Focus</strong> ${escapeHtml(focusLabel)}</div>` : ""}
       <div><strong>${escapeHtml(data.kind)}</strong></div>
       <div>${escapeHtml(data.label)}</div>
       ${data.qualname ? `<div><code>${escapeHtml(data.qualname)}</code></div>` : ""}
@@ -368,9 +409,10 @@ function describeNode(data) {
   `;
 }
 
-function describeEdge(data) {
+function describeEdge(data, focusLabel) {
   return `
     <div class="selection-list">
+      ${focusLabel ? `<div><strong>Focus</strong> ${escapeHtml(focusLabel)}</div>` : ""}
       <div><strong>Call</strong></div>
       <div><code>${escapeHtml(data.expression)}</code></div>
       ${
@@ -414,6 +456,7 @@ function hideLoading() {
 function applyGraphState(cy, state) {
   cy.elements().remove();
   cy.add(state.elements);
+  cy.elements().removeClass("is-hidden");
   sidebar.innerHTML = describeSummary(state.summary);
   const layout = cy.layout(state.layout);
   layout.once("layoutstop", () => {
@@ -422,6 +465,141 @@ function applyGraphState(cy, state) {
     cy.center();
   });
   layout.run();
+}
+
+function restoreFullGraph(cy, state) {
+  if (cy.elements(".is-hidden").length === 0) {
+    return;
+  }
+  cy.elements().removeClass("is-hidden");
+  sidebar.innerHTML = describeSummary(state.summary);
+  cy.fit(cy.elements(), state.layout.padding || 60);
+  cy.center();
+}
+
+function applyFocus(cy, state) {
+  const keptIds = new Set(state.elements.map((element) => element.data.id));
+  cy.elements().forEach((element) => {
+    if (keptIds.has(element.id())) {
+      element.removeClass("is-hidden");
+      return;
+    }
+    element.addClass("is-hidden");
+  });
+  sidebar.innerHTML = describeSummary(state.summary);
+  cy.fit(cy.elements(":visible"), state.layout.padding || 60);
+  cy.center();
+}
+
+function buildFocusedState(state, focusTarget) {
+  if (focusTarget.type === "node" && !["file", "method"].includes(focusTarget.data.kind)) {
+    return null;
+  }
+
+  const nodes = state.elements.filter((element) => element.data && !("source" in element.data));
+  const edges = state.elements.filter((element) => element.data && "source" in element.data);
+  const nodesById = new Map(nodes.map((element) => [element.data.id, element]));
+  const childNodeIdsByParent = new Map();
+
+  for (const node of nodes) {
+    const parentId = node.data.parent;
+    if (!parentId) {
+      continue;
+    }
+    if (!childNodeIdsByParent.has(parentId)) {
+      childNodeIdsByParent.set(parentId, []);
+    }
+    childNodeIdsByParent.get(parentId).push(node.data.id);
+  }
+
+  const keptNodeIds = new Set();
+  const keptEdgeIds = new Set();
+  const focusSeedNodeIds = resolveFocusSeedNodeIds(
+    focusTarget,
+    state.summary.mode,
+    childNodeIdsByParent,
+  );
+
+  for (const nodeId of focusSeedNodeIds) {
+    keptNodeIds.add(nodeId);
+  }
+
+  if (focusTarget.type === "edge") {
+    keptEdgeIds.add(focusTarget.data.id);
+    keptNodeIds.add(focusTarget.data.source);
+    keptNodeIds.add(focusTarget.data.target);
+  } else {
+    for (const edge of edges) {
+      if (!focusSeedNodeIds.has(edge.data.source) && !focusSeedNodeIds.has(edge.data.target)) {
+        continue;
+      }
+      keptEdgeIds.add(edge.data.id);
+      keptNodeIds.add(edge.data.source);
+      keptNodeIds.add(edge.data.target);
+    }
+  }
+
+  expandAncestorNodes(keptNodeIds, nodesById);
+
+  const focusedNodes = nodes.filter((node) => keptNodeIds.has(node.data.id));
+  const focusedEdges = edges.filter((edge) => keptEdgeIds.has(edge.data.id));
+  return {
+    elements: [...focusedNodes, ...focusedEdges],
+    summary: buildFocusSummary(state.summary.mode, focusedNodes, focusedEdges, focusTarget.data),
+    layout: state.layout,
+  };
+}
+
+function resolveFocusSeedNodeIds(focusTarget, mode, childNodeIdsByParent) {
+  if (focusTarget.type !== "node") {
+    return new Set();
+  }
+
+  const seedNodeIds = new Set([focusTarget.data.id]);
+  if (mode === "method" && focusTarget.data.kind === "file") {
+    const methodChildIds = childNodeIdsByParent.get(focusTarget.data.id) || [];
+    for (const nodeId of methodChildIds) {
+      seedNodeIds.add(nodeId);
+    }
+  }
+  return seedNodeIds;
+}
+
+function expandAncestorNodes(nodeIds, nodesById) {
+  const pending = [...nodeIds];
+  while (pending.length > 0) {
+    const nodeId = pending.pop();
+    const node = nodesById.get(nodeId);
+    const parentId = node?.data?.parent;
+    if (!parentId || nodeIds.has(parentId)) {
+      continue;
+    }
+    nodeIds.add(parentId);
+    pending.push(parentId);
+  }
+}
+
+function buildFocusSummary(mode, nodes, edges, focusData) {
+  return {
+    mode,
+    package_count: nodes.filter((node) => node.data.kind === "package").length,
+    file_count: nodes.filter((node) => node.data.kind === "file").length,
+    method_count: mode === "method"
+      ? nodes.filter((node) => node.data.kind === "method").length
+      : 0,
+    edge_count: edges.length,
+    focus_label: focusSummaryLabel(focusData),
+  };
+}
+
+function focusSummaryLabel(data) {
+  if (data.kind === "file") {
+    return `Connected files for ${data.label}`;
+  }
+  if (data.kind === "method") {
+    return `Connected methods for ${data.label}`;
+  }
+  return `Call path ${data.label || data.expression || ""}`.trim();
 }
 
 function shortFileLabel(node) {

@@ -91,6 +91,12 @@ def _build_handler(routes: WebRoutes) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
+            if headers is None:
+                headers = {}
+            if content_type.startswith("text/html") and "Cache-Control" not in headers:
+                headers["Cache-Control"] = "no-store, max-age=0"
+            if content_type.startswith("application/json") and "Cache-Control" not in headers:
+                headers["Cache-Control"] = "no-store, max-age=0"
             if headers:
                 for key, value in headers.items():
                     self.send_header(key, value)

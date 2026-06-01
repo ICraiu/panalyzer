@@ -12,6 +12,12 @@ from ..app_config import DEFAULT_PORT
 class WebRoutes:
     def __init__(self, context: WebAppContext):
         self.context = context
+        static_dir = Path(__file__).resolve().parent / "static"
+        self._asset_versions = {
+            asset_path.name: str(int(asset_path.stat().st_mtime_ns))
+            for asset_path in static_dir.iterdir()
+            if asset_path.is_file()
+        }
 
     def homepage(
         self,
@@ -41,7 +47,7 @@ class WebRoutes:
         message_block = (
             f'<div class="flash flash--success">{escape(message)}</div>' if message else ""
         )
-        html = _page(
+        html = self._page(
             "Panalyzer",
             f"""
             <main class="shell shell--home">
@@ -137,7 +143,7 @@ class WebRoutes:
             </script>
             """
 
-        html = _page(
+        html = self._page(
             project.name,
             f"""
             <main class="shell shell--detail">
@@ -180,7 +186,7 @@ class WebRoutes:
             <script src="https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js"></script>
             <script src="https://cdn.jsdelivr.net/npm/cytoscape-elk@2.3.0/dist/cytoscape-elk.min.js"></script>
             {created_script}
-            <script type="module" src="/static/graph.js"></script>
+            <script type="module" src="{self._static_url('graph.js')}"></script>
             """,
         )
         return 200, "text/html; charset=utf-8", html.encode("utf-8")
@@ -193,7 +199,7 @@ class WebRoutes:
         payload = json.dumps(artifacts.graph.model_dump(mode="json"), indent=2).encode("utf-8")
         return 200, "application/json; charset=utf-8", payload
 
-    def static_asset(self, asset_name: str) -> tuple[int, str, bytes]:
+    def static_asset(self, asset_name: str) -> tuple[int, str, bytes, dict[str, str]]:
         base_dir = Path(__file__).resolve().parent / "static"
         asset_path = (base_dir / asset_name).resolve()
         if not asset_path.is_file() or asset_path.parent != base_dir.resolve():
@@ -203,10 +209,13 @@ class WebRoutes:
             content_type = "text/css; charset=utf-8"
         elif asset_path.suffix == ".js":
             content_type = "text/javascript; charset=utf-8"
-        return 200, content_type, asset_path.read_bytes()
+        headers = {
+            "Cache-Control": "no-store, max-age=0",
+        }
+        return 200, content_type, asset_path.read_bytes(), headers
 
     def not_found(self) -> tuple[int, str, bytes]:
-        html = _page(
+        html = self._page(
             "Not Found",
             """
             <main class="shell">
@@ -220,9 +229,14 @@ class WebRoutes:
         )
         return 404, "text/html; charset=utf-8", html.encode("utf-8")
 
+    def _static_url(self, asset_name: str) -> str:
+        version = self._asset_versions.get(asset_name)
+        if version is None:
+            return f"/static/{asset_name}"
+        return f"/static/{asset_name}?v={version}"
 
-def _page(title: str, body: str) -> str:
-    return f"""<!DOCTYPE html>
+    def _page(self, title: str, body: str) -> str:
+        return f"""<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -231,7 +245,7 @@ def _page(title: str, body: str) -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/app.css" />
+    <link rel="stylesheet" href="{self._static_url('app.css')}" />
   </head>
   <body>
     {body}
