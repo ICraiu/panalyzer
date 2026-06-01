@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-analyzer"
+version = "0.1.0"
+description = "CLI tool to scan Python projects and map method references"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.9.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+panalyzer = "project_analyzer.cli:run"
+panalyzer-web = "project_analyzer.web.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+project_analyzer = ["web/static/*"]
