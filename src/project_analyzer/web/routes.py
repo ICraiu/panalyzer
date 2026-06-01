@@ -13,21 +13,33 @@ class WebRoutes:
     def __init__(self, context: WebAppContext):
         self.context = context
 
-    def homepage(self, error: str | None = None) -> tuple[int, str, bytes]:
+    def homepage(
+        self,
+        error: str | None = None,
+        message: str | None = None,
+    ) -> tuple[int, str, bytes]:
         projects = self.context.registry.list_projects()
         cards = "\n".join(
             f"""
-            <a class="project-card" href="/projects/{project.id}">
-              <div class="project-card__title">{escape(project.name)}</div>
-              <div class="project-card__path">{escape(project.path)}</div>
-              {f'<div class="project-card__source">{escape(project.source)}</div>' if project.source else ""}
-            </a>
+            <article class="project-card" data-project-id="{project.id}">
+              <a class="project-card__link" href="/projects/{project.id}">
+                <div class="project-card__title">{escape(project.name)}</div>
+                <div class="project-card__path">{escape(project.path)}</div>
+                {f'<div class="project-card__source">{escape(project.source)}</div>' if project.source else ""}
+              </a>
+              <form method="post" action="/projects/{project.id}/delete" class="project-card__actions">
+                <button type="submit" class="button button--danger">Delete</button>
+              </form>
+            </article>
             """
             for project in projects
         ) or '<div class="empty-state">No projects saved yet.</div>'
 
         error_block = (
             f'<div class="flash flash--error">{escape(error)}</div>' if error else ""
+        )
+        message_block = (
+            f'<div class="flash flash--success">{escape(message)}</div>' if message else ""
         )
         html = _page(
             "Panalyzer",
@@ -40,16 +52,18 @@ class WebRoutes:
                 </div>
                 <div class="meta-chip">Default port {DEFAULT_PORT}</div>
               </section>
-              {error_block}
               <section class="panel">
                 <h2>Add Project</h2>
                 <form method="post" action="/projects" class="project-form">
-                  <label for="project-path">Project root path or Git repository URL</label>
-                  <input id="project-path" name="path" type="text" placeholder="/absolute/path/to/project or https://github.com/org/repo.git" required />
+                  <label for="project-path">Python project root path</label>
+                  <input id="project-path" name="path" type="text" placeholder="/absolute/path/to/project" required />
+                  <div class="form-hint">Panalyzer accepts local Python project roots and rejects filesystem root paths like <code>/</code>.</div>
                   <button type="submit">Save Project</button>
                 </form>
               </section>
               <section class="panel">
+                {message_block}
+                {error_block}
                 <div class="panel__header">
                   <h2>Projects</h2>
                   <span>{len(projects)} saved</span>
@@ -59,6 +73,35 @@ class WebRoutes:
                 </div>
               </section>
             </main>
+            <script>
+              const createdProjectKey = "panalyzer-created-project";
+              const createdProjectReloadKey = "panalyzer-created-project-reloaded";
+
+              function syncCreatedProjectCard() {{
+                const createdProjectId = window.sessionStorage.getItem(createdProjectKey);
+                if (!createdProjectId) {{
+                  return;
+                }}
+
+                const existingCard = document.querySelector(`[data-project-id="${{createdProjectId}}"]`);
+                if (existingCard) {{
+                  window.sessionStorage.removeItem(createdProjectKey);
+                  window.sessionStorage.removeItem(createdProjectReloadKey);
+                  return;
+                }}
+
+                const reloadedProjectId = window.sessionStorage.getItem(createdProjectReloadKey);
+                if (reloadedProjectId === createdProjectId) {{
+                  window.sessionStorage.removeItem(createdProjectReloadKey);
+                  return;
+                }}
+
+                window.sessionStorage.setItem(createdProjectReloadKey, createdProjectId);
+                window.location.reload();
+              }}
+
+              window.addEventListener("pageshow", syncCreatedProjectCard);
+            </script>
             """,
         )
         return 200, "text/html; charset=utf-8", html.encode("utf-8")
@@ -71,12 +114,28 @@ class WebRoutes:
         except ValueError as exc:
             status, content_type, payload = self.homepage(str(exc))
             return status, content_type, payload, {}
-        return 303, "text/plain; charset=utf-8", b"", {"Location": f"/projects/{project.id}"}
+        return 303, "text/plain; charset=utf-8", b"", {"Location": f"/projects/{project.id}?created=1"}
 
-    def project_detail(self, project_id: str) -> tuple[int, str, bytes]:
+    def delete_project(self, project_id: str) -> tuple[int, str, bytes, dict[str, str]]:
+        deleted = self.context.registry.delete_project(project_id)
+        if not deleted:
+            status, content_type, payload = self.not_found()
+            return status, content_type, payload, {}
+        return 303, "text/plain; charset=utf-8", b"", {"Location": "/?message=Project+deleted"}
+
+    def project_detail(self, project_id: str, created: bool = False) -> tuple[int, str, bytes]:
         project = self.context.registry.get_project(project_id)
         if project is None:
             return self.not_found()
+
+        created_script = ""
+        if created:
+            created_script = f"""
+            <script>
+              window.sessionStorage.setItem("panalyzer-created-project", "{project.id}");
+              window.sessionStorage.removeItem("panalyzer-created-project-reloaded");
+            </script>
+            """
 
         html = _page(
             project.name,
@@ -84,6 +143,12 @@ class WebRoutes:
             <main class="shell shell--detail">
               <section class="graph-panel">
                 <div class="graph-stage">
+                  <div class="graph-nav">
+                    <a class="action-link" href="/">Back to projects</a>
+                    <form method="post" action="/projects/{project.id}/delete">
+                      <button type="submit" class="button button--danger">Delete project</button>
+                    </form>
+                  </div>
                   <div class="graph-toolbar">
                     <label class="view-toggle" for="graph-view-mode">
                       <select id="graph-view-mode">
@@ -114,6 +179,7 @@ class WebRoutes:
             <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
             <script src="https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js"></script>
             <script src="https://cdn.jsdelivr.net/npm/cytoscape-elk@2.3.0/dist/cytoscape-elk.min.js"></script>
+            {created_script}
             <script type="module" src="/static/graph.js"></script>
             """,
         )

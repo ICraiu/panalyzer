@@ -52,6 +52,8 @@ class ProjectRegistry:
             if not project_path.is_dir():
                 raise ValueError(f"path is not a directory: {project_path}")
 
+        _validate_project_root(project_path)
+
         config = load_app_config(self.config_path)
         normalized_path = str(project_path)
 
@@ -65,6 +67,26 @@ class ProjectRegistry:
         config.projects.sort(key=lambda item: item.name.lower())
         save_app_config(self.config_path, config)
         return self._registered_project(project_entry)
+
+    def delete_project(self, project_id: str) -> bool:
+        config = load_app_config(self.config_path)
+        remaining_projects: list[AppProjectConfig] = []
+        removed_project: AppProjectConfig | None = None
+
+        for project in config.projects:
+            registered = self._registered_project(project)
+            if registered.id == project_id and removed_project is None:
+                removed_project = project
+                continue
+            remaining_projects.append(project)
+
+        if removed_project is None:
+            return False
+
+        config.projects = remaining_projects
+        save_app_config(self.config_path, config)
+        self._cleanup_managed_project(removed_project)
+        return True
 
     def _registered_project(self, project: AppProjectConfig) -> RegisteredProject:
         digest = sha1(project.path.encode("utf-8")).hexdigest()[:12]
@@ -118,9 +140,70 @@ class ProjectRegistry:
             raise ValueError(_git_error("clone repository", result.stderr))
         return target_dir
 
+    def _cleanup_managed_project(self, project: AppProjectConfig) -> None:
+        if not project.source:
+            return
+        project_path = Path(project.path).resolve()
+        try:
+            project_path.relative_to(self.projects_dir.resolve())
+        except ValueError:
+            return
+        if project_path.exists():
+            shutil.rmtree(project_path)
+
 
 def _looks_like_repo_url(value: str) -> bool:
     return value.strip().startswith("https://")
+
+
+def _validate_project_root(project_path: Path) -> None:
+    if project_path.parent == project_path:
+        raise ValueError(f"refusing to scan filesystem root: {project_path}")
+    if not _looks_like_python_project(project_path):
+        raise ValueError(
+            "path does not look like a Python project root: expected pyproject.toml, setup.py, "
+            "setup.cfg, requirements.txt, Pipfile, manage.py, a top-level Python package, or a src/ layout"
+        )
+
+
+def _looks_like_python_project(project_path: Path) -> bool:
+    markers = (
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "requirements.txt",
+        "Pipfile",
+        "environment.yml",
+        "environment.yaml",
+        "tox.ini",
+        "manage.py",
+    )
+    if any((project_path / marker).exists() for marker in markers):
+        return True
+
+    if any(project_path.glob("*.py")):
+        return True
+
+    if _has_top_level_python_package(project_path):
+        return True
+
+    src_dir = project_path / "src"
+    if src_dir.is_dir() and _has_top_level_python_package(src_dir):
+        return True
+
+    return False
+
+
+def _has_top_level_python_package(base_dir: Path) -> bool:
+    for child in base_dir.iterdir():
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        init_file = child / "__init__.py"
+        if not init_file.is_file():
+            continue
+        if any(py_file.name != "__init__.py" for py_file in child.glob("*.py")):
+            return True
+    return False
 
 
 def _is_safe_public_host(hostname: str | None) -> bool:

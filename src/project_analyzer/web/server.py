@@ -3,6 +3,7 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
 from ..app_config import ensure_app_config, load_app_config, resolve_server_config
@@ -42,7 +43,8 @@ def _build_handler(routes: WebRoutes) -> type[BaseHTTPRequestHandler]:
             parsed = urlparse(self.path)
             path = parsed.path
             if path == "/":
-                self._send(*routes.homepage())
+                message = parse_qs(parsed.query).get("message", [""])[0] or None
+                self._send(*routes.homepage(message=message))
                 return
             if path.startswith("/projects/") and path.endswith("/graph"):
                 project_id = path.removeprefix("/projects/").removesuffix("/graph").strip("/")
@@ -50,7 +52,8 @@ def _build_handler(routes: WebRoutes) -> type[BaseHTTPRequestHandler]:
                 return
             if path.startswith("/projects/"):
                 project_id = path.removeprefix("/projects/").strip("/")
-                self._send(*routes.project_detail(project_id))
+                created = parse_qs(parsed.query).get("created", ["0"])[0] == "1"
+                self._send(*routes.project_detail(project_id, created=created))
                 return
             if path.startswith("/static/"):
                 asset_name = path.removeprefix("/static/")
@@ -60,13 +63,20 @@ def _build_handler(routes: WebRoutes) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if parsed.path != "/projects":
+            if parsed.path == "/projects":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length)
+                status, content_type, payload, headers = routes.add_project(body)
+                self._send(status, content_type, payload, headers=headers)
+                return
+            if parsed.path.startswith("/projects/") and parsed.path.endswith("/delete"):
+                project_id = parsed.path.removeprefix("/projects/").removesuffix("/delete").strip("/")
+                status, content_type, payload, headers = routes.delete_project(project_id)
+                self._send(status, content_type, payload, headers=headers)
+                return
+            else:
                 self._send(*routes.not_found())
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length)
-            status, content_type, payload, headers = routes.add_project(body)
-            self._send(status, content_type, payload, headers=headers)
 
         def log_message(self, format: str, *args) -> None:  # noqa: A003
             return
