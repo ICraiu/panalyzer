@@ -1,0 +1,28 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Local app runtime files
+app.yaml
+.panalyzer-runtime.json
+.panalyzer-webapp.log
+.panalyzer-projects/
+
+# Generated analysis outputs
+panalyzer.json
+
+# OS/editor noise
+.DS_Store
