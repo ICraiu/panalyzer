@@ -153,6 +153,9 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert "collectDescendantNodeIds(" in graph_js
     assert "!subtreeNodeIds.has(edge.data.source) || !subtreeNodeIds.has(edge.data.target)" in graph_js
     assert '(focusType === "file" && state.summary.mode === "method")' in graph_js
+    assert '"text-max-width": 220' in graph_js
+    assert "width: 240" in graph_js
+    assert "height: 52" in graph_js
 
     status, _, payload = routes.not_found()
     assert status == 404

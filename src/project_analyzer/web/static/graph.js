@@ -41,12 +41,12 @@ async function loadGraph(url) {
           selector: "node",
           style: {
             label: "data(label)",
-            color: "#f5f5f5",
+            color: "#f8f2e9",
             "font-size": 11,
             "text-wrap": "wrap",
             "text-max-width": 140,
-            "background-color": "#111111",
-            "border-color": "#404040",
+            "background-color": "#0d1720",
+            "border-color": "#405463",
             "border-width": 1.5,
             shape: "round-rectangle",
             width: "label",
@@ -57,9 +57,9 @@ async function loadGraph(url) {
         {
           selector: 'node[node_type = "package"]',
           style: {
-            "background-color": "#0e1417",
-            "background-opacity": 0.3,
-            "border-color": "#4f87b5",
+            "background-color": "#13212d",
+            "background-opacity": 0.44,
+            "border-color": "#f36d61",
             "border-style": "solid",
             "border-width": 2,
             "text-valign": "top",
@@ -72,15 +72,16 @@ async function loadGraph(url) {
             "padding-right": 30,
             "padding-top": 34,
             "padding-bottom": 30,
+            color: "#fff6e8",
           },
         },
         {
           selector: 'node[node_type = "file"]',
           style: {
-            color: "#111111",
-            "background-color": "#f3f7fb",
+            color: "#11202a",
+            "background-color": "#f5efdf",
             "background-opacity": 0.92,
-            "border-color": "#c4d4e5",
+            "border-color": "#d8c8a7",
             "border-style": "solid",
             "border-width": 1.5,
             "text-valign": "top",
@@ -112,25 +113,26 @@ async function loadGraph(url) {
         {
           selector: 'node[node_type = "method"]',
           style: {
-            "background-color": "#191c20",
-            "border-color": "#c6d8ef",
+            "background-color": "#162633",
+            "border-color": "#7fcfb6",
             "border-width": 1,
             "font-size": 10,
             "text-wrap": "wrap",
-            "text-max-width": 150,
+            "text-max-width": 220,
             "text-valign": "center",
             "text-halign": "center",
-            width: 170,
-            height: 38,
+            width: 240,
+            height: 52,
             padding: 0,
+            color: "#eff7f3",
           },
         },
         {
           selector: "edge",
           style: {
             width: 1.5,
-            "line-color": "#dce8f6",
-            "target-arrow-color": "#9dcbff",
+            "line-color": "#b89490",
+            "target-arrow-color": "#f3b86c",
             "target-arrow-shape": "triangle",
             "curve-style": "round-taxi",
             "taxi-direction": "rightward",
@@ -853,10 +855,10 @@ function buildMethodViewPositions(nodes) {
   const packagePaddingY = 120;
   const fileGapX = 320;
   const fileGapY = 180;
-  const fileBoxWidth = 240;
-  const methodGapY = 54;
+  const fileBoxWidth = 300;
+  const methodGapY = 64;
   const methodStackTop = 72;
-  const methodBoxHeight = 38;
+  const methodBoxHeight = 52;
   const packageLayouts = packages.map((pkg) => {
     const packageFiles = filesByPackage.get(pkg.id) || [];
     const fullRowWidth = Math.max(1, Math.ceil(Math.sqrt(Math.max(packageFiles.length, 1))));
