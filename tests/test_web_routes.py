@@ -8,6 +8,8 @@ import json
 from project_analyzer.models import (
     ArchitectureDocument,
     ArchitectureSummary,
+    DiagramDocument,
+    DiagramSummary,
     GraphDocument,
     GraphSummary,
     Project,
@@ -53,6 +55,13 @@ class FakeAnalysisService:
         root = str(project_root)
         return AnalysisArtifacts(
             project=Project(root=root, packages=[], references=[]),
+            diagram=DiagramDocument(
+                root=root,
+                summary=DiagramSummary(package_count=0, file_count=0, transition_count=0),
+                packages=[],
+                files=[],
+                transitions=[],
+            ),
             architecture=ArchitectureDocument(
                 root=root,
                 summary=ArchitectureSummary(

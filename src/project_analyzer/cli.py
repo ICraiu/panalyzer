@@ -47,7 +47,7 @@ def status() -> None:
 
 
 def analyze_path(path: str = ".") -> None:
-    """Analyze a Python project and print the scan domain JSON."""
+    """Analyze a Python project and print the package/file transition diagram JSON."""
 
     root = Path(path).resolve()
     if not root.exists():
@@ -58,7 +58,7 @@ def analyze_path(path: str = ".") -> None:
         raise typer.Exit(1)
 
     artifacts = ProjectAnalysisService().analyze_project(root)
-    typer.echo(artifacts.project.model_dump_json(indent=2))
+    typer.echo(artifacts.diagram.model_dump_json(indent=2))
 
 
 def run() -> None:
@@ -91,7 +91,6 @@ def _help_text() -> str:
   panalyzer start
   panalyzer stop
   panalyzer status
-  panalyzer-web --config ./app.yaml
 
 Commands:
   start   Start the panalyzer web app.

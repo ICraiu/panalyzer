@@ -20,7 +20,6 @@ dev = [
 
 [project.scripts]
 panalyzer = "project_analyzer.cli:run"
-panalyzer-web = "project_analyzer.web.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

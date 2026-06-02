@@ -7,6 +7,7 @@ from .architecture import (
     ArchitectureSection,
     ArchitectureSummary,
 )
+from .diagram import DiagramDocument, DiagramFile, DiagramPackage, DiagramSummary, DiagramTransition
 from .graph import GraphDocument, GraphEdge, GraphFileNode, GraphMethodNode, GraphPackageNode, GraphSummary
 from .method import Method, MethodReference
 from .package import Package
@@ -21,6 +22,11 @@ __all__ = [
     "ArchitecturePackageNode",
     "ArchitectureSection",
     "ArchitectureSummary",
+    "DiagramDocument",
+    "DiagramFile",
+    "DiagramPackage",
+    "DiagramSummary",
+    "DiagramTransition",
     "GraphDocument",
     "GraphEdge",
     "GraphFileNode",

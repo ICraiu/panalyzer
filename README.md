@@ -4,7 +4,7 @@ Panalyzer analyzes a Python codebase and turns it into a navigable architecture 
 
 It is built for two related workflows:
 
-- export a machine-readable architecture document as JSON
+- export a machine-readable package/file transition diagram as JSON
 - open a web app to inspect package, file, and method relationships visually
 
 The current UI is especially useful for understanding:
@@ -20,15 +20,16 @@ Panalyzer works in two modes.
 
 ### 1. CLI JSON Export
 
-Running `panalyzer` on a project prints the scanned project domain as JSON to stdout.
+Running `panalyzer` on a project prints the package/file architecture diagram as JSON to stdout.
 
 That JSON includes:
 
 - `root`
 - `packages`
-- `references`
+- `files`
+- `transitions`
 
-This output is the scan model itself, not the web graph projection.
+This output is the file-level architecture base used for downstream reasoning.
 
 ### 2. Web App
 
@@ -136,7 +137,7 @@ Notes:
 
 ## CLI JSON Shape
 
-The CLI emits the scanned project model.
+The CLI emits the package/file transition diagram.
 
 Top-level structure:
 
@@ -144,15 +145,16 @@ Top-level structure:
 {
   "root": "/path/to/project",
   "packages": [],
-  "references": []
+  "files": [],
+  "transitions": []
 }
 ```
 
 In practice:
 
-- `packages` contain grouped source files
-- `methods` live under each file
-- `references` contain retained call relationships
+- `packages` identify architectural groupings
+- `files` identify source files and their containing packages
+- `transitions` collapse internal method calls into file-to-file dependencies
 
 ## Web UI Behavior
 
@@ -193,10 +195,10 @@ Current limitations are mostly the usual static-analysis ones:
 
 ## Deployment
 
-For a hosted deployment, run the foreground web server entrypoint instead of the background `panalyzer start` helper:
+For a hosted deployment, run the module entrypoint instead of the background `panalyzer start` helper:
 
 ```bash
-panalyzer-web --config ./app.yaml
+python -m project_analyzer.web.server --config ./app.yaml
 ```
 
 Most platforms provide a `PORT` environment variable. Panalyzer will honor that automatically.
@@ -210,7 +212,7 @@ Recommended pattern:
 
 ```bash
 pip install .
-panalyzer-web --config /app/app.yaml
+python -m project_analyzer.web.server --config /app/app.yaml
 ```
 
 ## Development

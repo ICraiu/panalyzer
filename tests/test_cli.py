@@ -7,13 +7,28 @@ import pytest
 import typer
 
 from project_analyzer import cli
-from project_analyzer.models import ArchitectureDocument, ArchitectureSummary, GraphDocument, GraphSummary, Project
+from project_analyzer.models import (
+    ArchitectureDocument,
+    ArchitectureSummary,
+    DiagramDocument,
+    DiagramSummary,
+    GraphDocument,
+    GraphSummary,
+    Project,
+)
 from project_analyzer.services.project_analysis import AnalysisArtifacts
 
 
 def _sample_artifacts(root: Path) -> AnalysisArtifacts:
     return AnalysisArtifacts(
         project=Project(root=str(root), packages=[], references=[]),
+        diagram=DiagramDocument(
+            root=str(root),
+            summary=DiagramSummary(package_count=0, file_count=0, transition_count=0),
+            packages=[],
+            files=[],
+            transitions=[],
+        ),
         architecture=ArchitectureDocument(
             root=str(root),
             summary=ArchitectureSummary(
@@ -35,7 +50,7 @@ def _sample_artifacts(root: Path) -> AnalysisArtifacts:
     )
 
 
-def test_analyze_path_prints_architecture_json(tmp_path: Path, monkeypatch) -> None:
+def test_analyze_path_prints_diagram_json(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
     outputs: list[str] = []
@@ -51,9 +66,10 @@ def test_analyze_path_prints_architecture_json(tmp_path: Path, monkeypatch) -> N
     assert '"root"' in outputs[0]
     assert str(project_root.resolve()) in outputs[0]
     assert '"packages"' in outputs[0]
-    assert '"sections"' not in outputs[0]
+    assert '"files"' in outputs[0]
+    assert '"transitions"' in outputs[0]
+    assert '"references"' not in outputs[0]
     assert '"nodes"' not in outputs[0]
-    assert '"edges"' not in outputs[0]
 
 
 def test_analyze_path_rejects_missing_path(tmp_path: Path, monkeypatch) -> None:
@@ -85,6 +101,7 @@ def test_run_prints_help(monkeypatch) -> None:
     cli.run()
 
     assert outputs[0].startswith("Usage:")
+    assert "panalyzer-web" not in outputs[0]
 
 
 def test_run_rejects_extra_args(monkeypatch) -> None:
