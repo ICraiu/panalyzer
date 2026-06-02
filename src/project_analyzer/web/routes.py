@@ -31,7 +31,6 @@ class WebRoutes:
               <a class="project-card__link" href="/projects/{project.id}">
                 <div class="project-card__title">{escape(project.name)}</div>
                 <div class="project-card__path">{escape(project.path)}</div>
-                {f'<div class="project-card__source">{escape(project.source)}</div>' if project.source else ""}
               </a>
               <form method="post" action="/projects/{project.id}/delete" class="project-card__actions">
                 <button type="submit" class="button button--danger">Delete</button>
@@ -172,7 +171,6 @@ class WebRoutes:
                   <div class="graph-project-meta">
                     <div class="graph-project-meta__name">{escape(project.name)}</div>
                     <div class="graph-project-meta__path">{escape(project.path)}</div>
-                    {f'<div class="graph-project-meta__path">{escape(project.source)}</div>' if project.source else ""}
                   </div>
                   <div class="graph-loading" id="graph-loading" aria-live="polite">
                     <div class="graph-loading__spinner" aria-hidden="true"></div>

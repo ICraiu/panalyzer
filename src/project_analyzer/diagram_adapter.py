@@ -33,7 +33,9 @@ class D2DiagramAdapter:
                     method_paths[method.qualname] = f"{package_id}.{file_id}.{method_id}"
 
         for reference in project.references:
-            if reference.source_method is None or not reference.internal:
+            if reference.source_method is None:
+                continue
+            if reference.target_method not in method_paths:
                 continue
             line_targets_by_source.setdefault(
                 (reference.source_method, reference.line),
@@ -41,7 +43,9 @@ class D2DiagramAdapter:
             ).add(reference.target_method)
 
         for reference in project.references:
-            if reference.source_method is None or not reference.internal:
+            if reference.source_method is None:
+                continue
+            if reference.target_method not in method_paths:
                 continue
             edge_key = (reference.source_method, reference.target_method, reference.line)
             if edge_key in seen_edges:
@@ -120,7 +124,7 @@ class D2DiagramAdapter:
 
 def _method_label(method: Method) -> str:
     method_name = display_name(method.name)
-    if method.kind.value == "class":
+    if method.signature.startswith("class "):
         return f"class {method_name} | L{method.line}"
     return f"{method_name}(...) | L{method.line}"
 

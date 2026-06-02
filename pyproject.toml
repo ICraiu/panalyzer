@@ -13,6 +13,11 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 panalyzer = "project_analyzer.cli:run"
 panalyzer-web = "project_analyzer.web.server:main"
@@ -22,3 +27,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 project_analyzer = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

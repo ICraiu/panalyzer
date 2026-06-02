@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from .architecture_adapter import ArchitectureDocumentAdapter, _is_constructor_edge_shadowed
-from .models import GraphDocument, GraphEdge, GraphNode, GraphSummary, Project
+from .models import (
+    ArchitectureFileNode,
+    ArchitectureMethodNode,
+    ArchitecturePackageNode,
+    GraphDocument,
+    GraphEdge,
+    GraphFileNode,
+    GraphMethodNode,
+    GraphPackageNode,
+    GraphSummary,
+    Project,
+)
 
 
 class GraphDocumentAdapter:
@@ -9,29 +20,51 @@ class GraphDocumentAdapter:
 
     def to_document(self, project: Project) -> GraphDocument:
         architecture = ArchitectureDocumentAdapter().to_document(project)
-        nodes = [
-            GraphNode(
-                id=node.id,
-                kind=node.kind,
-                label=node.label,
-                parent_id=node.parent_id,
-                path=node.path,
-                import_path=node.import_path,
-                qualname=node.qualname,
-                signature=node.signature,
-                line=node.line,
-            )
-            for node in architecture.nodes
-        ]
+        nodes: list[GraphPackageNode | GraphFileNode | GraphMethodNode] = []
+        for node in architecture.nodes:
+            if isinstance(node, ArchitecturePackageNode):
+                nodes.append(
+                    GraphPackageNode(
+                        id=node.id,
+                        label=node.label,
+                        path=node.path,
+                    )
+                )
+            elif isinstance(node, ArchitectureFileNode):
+                nodes.append(
+                    GraphFileNode(
+                        id=node.id,
+                        label=node.label,
+                        parent_id=node.parent_id,
+                        path=node.path,
+                        import_path=node.import_path,
+                    )
+                )
+            else:
+                assert isinstance(node, ArchitectureMethodNode)
+                nodes.append(
+                    GraphMethodNode(
+                        id=node.id,
+                        label=node.label,
+                        parent_id=node.parent_id,
+                        path=node.path,
+                        import_path=node.import_path,
+                        qualname=node.qualname,
+                        signature=node.signature,
+                        line=node.line,
+                    )
+                )
 
         method_node_ids = {
             node.qualname: node.id
             for node in architecture.nodes
-            if node.kind == "method" and node.qualname is not None
+            if isinstance(node, ArchitectureMethodNode)
         }
         line_targets_by_source: dict[tuple[str, int], set[str]] = {}
         for reference in project.references:
-            if reference.source_method is None or not reference.internal:
+            if reference.source_method is None:
+                continue
+            if reference.target_method not in method_node_ids:
                 continue
             line_targets_by_source.setdefault(
                 (reference.source_method, reference.line),
@@ -41,7 +74,9 @@ class GraphDocumentAdapter:
         edges: list[GraphEdge] = []
         seen_edges: set[str] = set()
         for reference in project.references:
-            if reference.source_method is None or not reference.internal:
+            if reference.source_method is None:
+                continue
+            if reference.target_method not in method_node_ids:
                 continue
             if _is_constructor_edge_shadowed(reference, line_targets_by_source):
                 continue
@@ -56,12 +91,9 @@ class GraphDocumentAdapter:
             edges.append(
                 GraphEdge(
                     id=edge_id,
-                    kind="calls",
                     source_id=source_id,
                     target_id=target_id,
                     line=reference.line,
-                    expression=reference.expression,
-                    resolution=reference.resolution,
                 )
             )
 

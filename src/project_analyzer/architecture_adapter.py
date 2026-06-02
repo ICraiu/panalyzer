@@ -5,7 +5,9 @@ import json
 from .models import (
     ArchitectureDocument,
     ArchitectureEdge,
-    ArchitectureNode,
+    ArchitectureFileNode,
+    ArchitectureMethodNode,
+    ArchitecturePackageNode,
     ArchitectureSection,
     ArchitectureSummary,
     Project,
@@ -17,16 +19,15 @@ class ArchitectureDocumentAdapter:
     """Build a GPT-readable architecture document from the domain model."""
 
     def to_document(self, project: Project) -> ArchitectureDocument:
-        node_map: dict[str, ArchitectureNode] = {}
+        node_map: dict[str, ArchitecturePackageNode | ArchitectureFileNode | ArchitectureMethodNode] = {}
         edge_map: dict[str, ArchitectureEdge] = {}
         method_paths: dict[str, str] = {}
         sections: list[ArchitectureSection] = []
 
         for package in project.packages:
             package_id = node_id("pkg", package.name)
-            package_node = ArchitectureNode(
+            package_node = ArchitecturePackageNode(
                 id=package_id,
-                kind="package",
                 label=package.name,
                 path=package.path,
             )
@@ -37,9 +38,8 @@ class ArchitectureDocumentAdapter:
 
             for source_file in package.files:
                 file_id = node_id("file", source_file.import_path)
-                file_node = ArchitectureNode(
+                file_node = ArchitectureFileNode(
                     id=file_id,
-                    kind="file",
                     label=source_file.import_path,
                     parent_id=package_id,
                     path=source_file.path,
@@ -51,10 +51,9 @@ class ArchitectureDocumentAdapter:
                 method_node_ids: list[str] = []
                 for method in source_file.methods:
                     method_id = node_id("method", method.qualname)
-                    method_label = _method_display_label(method.name, method.kind.value, method.line)
-                    method_node = ArchitectureNode(
+                    method_label = _method_display_label(method.name, method.signature, method.line)
+                    method_node = ArchitectureMethodNode(
                         id=method_id,
-                        kind="method",
                         label=method_label,
                         parent_id=file_id,
                         path=source_file.path,
@@ -88,7 +87,9 @@ class ArchitectureDocumentAdapter:
 
         line_targets_by_source: dict[tuple[str, int], set[str]] = {}
         for reference in project.references:
-            if reference.source_method is None or not reference.internal:
+            if reference.source_method is None:
+                continue
+            if reference.target_method not in method_paths:
                 continue
             line_targets_by_source.setdefault(
                 (reference.source_method, reference.line),
@@ -96,7 +97,9 @@ class ArchitectureDocumentAdapter:
             ).add(reference.target_method)
 
         for reference in project.references:
-            if reference.source_method is None or not reference.internal:
+            if reference.source_method is None:
+                continue
+            if reference.target_method not in method_paths:
                 continue
             if _is_constructor_edge_shadowed(reference, line_targets_by_source):
                 continue
@@ -110,12 +113,9 @@ class ArchitectureDocumentAdapter:
             )
             edge_map[edge_id] = ArchitectureEdge(
                 id=edge_id,
-                kind="calls",
                 source_id=source_id,
                 target_id=target_id,
-                expression=reference.expression,
                 line=reference.line,
-                resolution=reference.resolution,
             )
 
         return ArchitectureDocument(
@@ -140,9 +140,9 @@ class ArchitectureDocumentAdapter:
         return json.dumps(document.model_dump(mode="json"), indent=2)
 
 
-def _method_display_label(name: str, kind: str, line: int) -> str:
+def _method_display_label(name: str, signature: str, line: int) -> str:
     method_name = display_name(name)
-    if kind == "class":
+    if signature.startswith("class "):
         return f"class {method_name} | L{line}"
     return f"{method_name}(...) | L{line}"
 

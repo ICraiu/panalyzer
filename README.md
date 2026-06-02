@@ -20,23 +20,21 @@ Panalyzer works in two modes.
 
 ### 1. CLI JSON Export
 
-Running `panalyzer` on a project prints a canonical architecture JSON document to stdout.
+Running `panalyzer` on a project prints the scanned project domain as JSON to stdout.
 
 That JSON includes:
 
-- `summary`
-- `sections`
-- `nodes`
-- `edges`
+- `root`
+- `packages`
+- `references`
 
-This output is meant to be readable by both humans and LLM-based tooling.
+This output is the scan model itself, not the web graph projection.
 
 ### 2. Web App
 
 The web app lets you:
 
 - save project roots in `app.yaml`
-- import a public Git repository over `https://`
 - open a project as an interactive graph
 - switch between:
   - `Files`: package -> file view with aggregated file-to-file transitions
@@ -115,9 +113,6 @@ server:
 projects:
   - name: my-project
     path: /absolute/path/to/project
-  - name: another-project
-    path: /workspace/.panalyzer-projects/another-project-abc123
-    source: https://github.com/org/another-project.git
 ```
 
 ### `panalyzer.toml`
@@ -139,36 +134,31 @@ Notes:
 - `include_external_references = false` keeps the graph focused on project-internal relationships
 - `ignore_files` uses glob-style patterns
 
-## JSON Shape
+## CLI JSON Shape
 
-The CLI emits a canonical architecture document with stable identifiers.
+The CLI emits the scanned project model.
 
 Top-level structure:
 
 ```json
 {
   "root": "/path/to/project",
-  "summary": {},
-  "sections": [],
-  "nodes": [],
-  "edges": []
+  "packages": [],
+  "references": []
 }
 ```
 
 In practice:
 
-- `sections` provide grouped package/file structure
-- `nodes` contain package, file, and method nodes
-- `edges` contain internal call relationships
+- `packages` contain grouped source files
+- `methods` live under each file
+- `references` contain retained call relationships
 
 ## Web UI Behavior
 
 The default project view opens in `Files` mode.
 
-The add-project form accepts either:
-
-- an absolute local path
-- an `https://` Git repository URL
+The add-project form accepts an absolute local path.
 
 Views:
 
@@ -200,7 +190,6 @@ Current limitations are mostly the usual static-analysis ones:
 - complex runtime import behavior is not fully resolved
 - external/library calls are excluded by default
 - large graphs can still become visually dense, especially in method view
-- public repo import shells out to `git clone`, so hosted deployments still need `git` installed
 
 ## Deployment
 
@@ -215,8 +204,7 @@ Most platforms provide a `PORT` environment variable. Panalyzer will honor that 
 Minimum deployment requirements:
 
 - Python 3.11+
-- `git` available on the runtime image
-- writable storage for `app.yaml`, `.panalyzer-runtime.json`, logs, and `.panalyzer-projects/`
+- writable storage for `app.yaml`, `.panalyzer-runtime.json`, and logs
 
 Recommended pattern:
 

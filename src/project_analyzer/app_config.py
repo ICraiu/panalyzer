@@ -23,7 +23,6 @@ class AppServerConfig(BaseModel):
 class AppProjectConfig(BaseModel):
     name: str
     path: str
-    source: str | None = None
 
 
 class AppConfig(BaseModel):

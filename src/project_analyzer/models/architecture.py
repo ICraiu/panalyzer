@@ -3,30 +3,44 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class ArchitectureNode(BaseModel):
-    """A graph node suitable for machines and humans."""
+class ArchitecturePackageNode(BaseModel):
+    """A package node suitable for machines and humans."""
 
     id: str = Field(description="Stable node identifier")
-    kind: str = Field(description="Node type: package, file, method")
     label: str = Field(description="Human-readable display label")
-    parent_id: str | None = Field(default=None, description="Containing node identifier")
-    path: str | None = Field(default=None, description="Absolute path for package/file nodes")
-    import_path: str | None = Field(default=None, description="Import path for file/method nodes")
-    qualname: str | None = Field(default=None, description="Qualified name for method nodes")
-    signature: str | None = Field(default=None, description="Method or class signature when relevant")
-    line: int | None = Field(default=None, description="Source line number when relevant")
+    path: str = Field(description="Absolute path for the package")
+
+
+class ArchitectureFileNode(BaseModel):
+    """A file node suitable for machines and humans."""
+
+    id: str = Field(description="Stable node identifier")
+    label: str = Field(description="Human-readable display label")
+    parent_id: str = Field(description="Containing package node identifier")
+    path: str = Field(description="Absolute path for the file")
+    import_path: str = Field(description="Import path for the file")
+
+
+class ArchitectureMethodNode(BaseModel):
+    """A method node suitable for machines and humans."""
+
+    id: str = Field(description="Stable node identifier")
+    label: str = Field(description="Human-readable display label")
+    parent_id: str = Field(description="Containing file node identifier")
+    path: str = Field(description="Absolute path for the file")
+    import_path: str = Field(description="Import path for the file")
+    qualname: str = Field(description="Qualified name for the method")
+    signature: str = Field(description="Method or class signature")
+    line: int = Field(description="Source line number")
 
 
 class ArchitectureEdge(BaseModel):
     """A graph edge suitable for machines and humans."""
 
     id: str = Field(description="Stable edge identifier")
-    kind: str = Field(description="Edge type: calls")
     source_id: str = Field(description="Source node identifier")
     target_id: str = Field(description="Target node identifier")
-    expression: str = Field(description="Call expression as found in source")
     line: int = Field(description="Source line where the relation occurs")
-    resolution: str = Field(description="How the relation target was resolved")
 
 
 class ArchitectureSection(BaseModel):
@@ -63,7 +77,7 @@ class ArchitectureDocument(BaseModel):
         default_factory=list,
         description="Grouped package/file sections for structured inspection",
     )
-    nodes: list[ArchitectureNode] = Field(
+    nodes: list[ArchitecturePackageNode | ArchitectureFileNode | ArchitectureMethodNode] = Field(
         default_factory=list,
         description="Flat graph nodes with stable identifiers",
     )

@@ -1,12 +1,14 @@
 from .architecture import (
     ArchitectureDocument,
     ArchitectureEdge,
-    ArchitectureNode,
+    ArchitectureFileNode,
+    ArchitectureMethodNode,
+    ArchitecturePackageNode,
     ArchitectureSection,
     ArchitectureSummary,
 )
-from .graph import GraphDocument, GraphEdge, GraphNode, GraphSummary
-from .method import Method, MethodKind, MethodReference
+from .graph import GraphDocument, GraphEdge, GraphFileNode, GraphMethodNode, GraphPackageNode, GraphSummary
+from .method import Method, MethodReference
 from .package import Package
 from .project import Project
 from .source_file import SourceFile
@@ -14,15 +16,18 @@ from .source_file import SourceFile
 __all__ = [
     "ArchitectureDocument",
     "ArchitectureEdge",
-    "ArchitectureNode",
+    "ArchitectureFileNode",
+    "ArchitectureMethodNode",
+    "ArchitecturePackageNode",
     "ArchitectureSection",
     "ArchitectureSummary",
     "GraphDocument",
     "GraphEdge",
-    "GraphNode",
+    "GraphFileNode",
+    "GraphMethodNode",
+    "GraphPackageNode",
     "GraphSummary",
     "Method",
-    "MethodKind",
     "MethodReference",
     "Package",
     "Project",

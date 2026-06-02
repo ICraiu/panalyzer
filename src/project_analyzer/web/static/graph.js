@@ -55,7 +55,7 @@ async function loadGraph(url) {
           },
         },
         {
-          selector: 'node[kind = "package"]',
+          selector: 'node[node_type = "package"]',
           style: {
             "background-color": "#0e1417",
             "background-opacity": 0.3,
@@ -75,7 +75,7 @@ async function loadGraph(url) {
           },
         },
         {
-          selector: 'node[kind = "file"]',
+          selector: 'node[node_type = "file"]',
           style: {
             color: "#111111",
             "background-color": "#f3f7fb",
@@ -95,7 +95,7 @@ async function loadGraph(url) {
           },
         },
         {
-          selector: 'node[kind = "file"][view_mode = "file"]',
+          selector: 'node[node_type = "file"][view_mode = "file"]',
           style: {
             "text-valign": "center",
             "text-halign": "center",
@@ -110,7 +110,7 @@ async function loadGraph(url) {
           },
         },
         {
-          selector: 'node[kind = "method"]',
+          selector: 'node[node_type = "method"]',
           style: {
             "background-color": "#191c20",
             "border-color": "#c6d8ef",
@@ -141,10 +141,17 @@ async function loadGraph(url) {
           },
         },
         {
-          selector: ":selected",
+          selector: "node:selected, node.is-hovered",
           style: {
             "border-color": "#7ee787",
+            "border-width": 3,
+          },
+        },
+        {
+          selector: "edge:selected, edge.is-hovered",
+          style: {
             "line-color": "#7ee787",
+            width: 3,
             "target-arrow-color": "#7ee787",
           },
         },
@@ -192,6 +199,12 @@ async function loadGraph(url) {
     cy.on("click", "node", focusNode);
     cy.on("tap", "edge", focusEdge);
     cy.on("click", "edge", focusEdge);
+    cy.on("mouseover", "node, edge", (event) => {
+      event.target.addClass("is-hovered");
+    });
+    cy.on("mouseout", "node, edge", (event) => {
+      event.target.removeClass("is-hovered");
+    });
 
     const clearFocus = (event) => {
       if (event.target === cy) {
@@ -225,16 +238,17 @@ function buildGraphStates(graph) {
 
 function buildMethodGraphState(graph) {
   const positions = buildMethodViewPositions(graph.nodes);
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const nodes = sortedNodes(graph.nodes).map((node) => ({
     data: {
       id: node.id,
       label:
-        node.kind === "file"
+        nodeType(node) === "file"
           ? shortFileLabel(node)
-          : node.kind === "package"
+          : nodeType(node) === "package"
             ? shortPackageLabel(node)
             : node.label,
-      kind: node.kind,
+      node_type: nodeType(node),
       view_mode: "method",
       parent: node.parent_id || undefined,
       path: node.path,
@@ -251,10 +265,9 @@ function buildMethodGraphState(graph) {
       id: edge.id,
       source: edge.source_id,
       target: edge.target_id,
-      kind: edge.kind,
-      expression: edge.expression,
+      source_label: edgeEndpointLabel(nodeById.get(edge.source_id)),
+      target_label: edgeEndpointLabel(nodeById.get(edge.target_id)),
       line: edge.line,
-      resolution: edge.resolution,
     },
   }));
 
@@ -272,9 +285,9 @@ function buildMethodGraphState(graph) {
 }
 
 function buildFileGraphState(graph) {
-  const packageNodes = graph.nodes.filter((node) => node.kind === "package");
-  const fileNodes = graph.nodes.filter((node) => node.kind === "file");
-  const methodNodes = graph.nodes.filter((node) => node.kind === "method");
+  const packageNodes = graph.nodes.filter((node) => nodeType(node) === "package");
+  const fileNodes = graph.nodes.filter((node) => nodeType(node) === "file");
+  const methodNodes = graph.nodes.filter((node) => nodeType(node) === "method");
 
   const fileById = new Map(fileNodes.map((node) => [node.id, node]));
   const methodToFile = new Map(
@@ -298,10 +311,9 @@ function buildFileGraphState(graph) {
         id: `file_edge_${key}`,
         source_id: sourceFileId,
         target_id: targetFileId,
-        kind: "calls",
         line: edge.line,
-        expression: `${sourceFile?.label || sourceFileId} -> ${targetFile?.label || targetFileId}`,
-        resolution: "aggregated_file_transition",
+        source_label: edgeEndpointLabel(sourceFile),
+        target_label: edgeEndpointLabel(targetFile),
         call_count: 0,
       });
     }
@@ -316,7 +328,6 @@ function buildFileGraphState(graph) {
     ...fileNodes.map((node) => ({
       ...node,
       label: shortFileLabel(node),
-      kind: "file",
     })),
   ];
   const positions = buildFileViewPositions(collapsedNodes);
@@ -324,7 +335,7 @@ function buildFileGraphState(graph) {
     data: {
       id: node.id,
       label: node.label,
-      kind: node.kind,
+      node_type: nodeType(node),
       view_mode: "file",
       parent: node.parent_id || undefined,
       path: node.path,
@@ -344,10 +355,9 @@ function buildFileGraphState(graph) {
       id: edge.id,
       source: edge.source_id,
       target: edge.target_id,
-      kind: edge.kind,
-      expression: edge.expression,
+      source_label: edge.source_label,
+      target_label: edge.target_label,
       line: edge.line,
-      resolution: edge.resolution,
       call_count: edge.call_count,
     },
     }));
@@ -398,7 +408,7 @@ function describeNode(data, focusLabel) {
   return `
     <div class="selection-list">
       ${focusLabel ? `<div><strong>Focus</strong> ${escapeHtml(focusLabel)}</div>` : ""}
-      <div><strong>${escapeHtml(data.kind)}</strong></div>
+      <div><strong>${escapeHtml(nodeType(data))}</strong></div>
       <div>${escapeHtml(data.label)}</div>
       ${data.qualname ? `<div><code>${escapeHtml(data.qualname)}</code></div>` : ""}
       ${data.signature ? `<div><code>${escapeHtml(data.signature)}</code></div>` : ""}
@@ -414,14 +424,13 @@ function describeEdge(data, focusLabel) {
     <div class="selection-list">
       ${focusLabel ? `<div><strong>Focus</strong> ${escapeHtml(focusLabel)}</div>` : ""}
       <div><strong>Call</strong></div>
-      <div><code>${escapeHtml(data.expression)}</code></div>
+      <div><code>${escapeHtml(`${data.source_label} -> ${data.target_label}`)}</code></div>
       ${
         data.call_count
           ? `<div><strong>Collapsed calls</strong> ${data.call_count}</div>`
           : ""
       }
       <div><strong>Line</strong> ${data.line}</div>
-      <div><strong>Resolution</strong> ${escapeHtml(data.resolution)}</div>
     </div>
   `;
 }
@@ -492,10 +501,6 @@ function applyFocus(cy, state) {
 }
 
 function buildFocusedState(state, focusTarget) {
-  if (focusTarget.type === "node" && !["file", "method"].includes(focusTarget.data.kind)) {
-    return null;
-  }
-
   const nodes = state.elements.filter((element) => element.data && !("source" in element.data));
   const edges = state.elements.filter((element) => element.data && "source" in element.data);
   const nodesById = new Map(nodes.map((element) => [element.data.id, element]));
@@ -514,28 +519,63 @@ function buildFocusedState(state, focusTarget) {
 
   const keptNodeIds = new Set();
   const keptEdgeIds = new Set();
-  const focusSeedNodeIds = resolveFocusSeedNodeIds(
-    focusTarget,
-    state.summary.mode,
-    childNodeIdsByParent,
-  );
-
-  for (const nodeId of focusSeedNodeIds) {
-    keptNodeIds.add(nodeId);
-  }
 
   if (focusTarget.type === "edge") {
     keptEdgeIds.add(focusTarget.data.id);
     keptNodeIds.add(focusTarget.data.source);
     keptNodeIds.add(focusTarget.data.target);
   } else {
-    for (const edge of edges) {
-      if (!focusSeedNodeIds.has(edge.data.source) && !focusSeedNodeIds.has(edge.data.target)) {
-        continue;
+    const focusType = nodeType(focusTarget.data);
+    if (focusType === "package" || (focusType === "file" && state.summary.mode === "method")) {
+      const subtreeNodeIds = collectDescendantNodeIds(
+        focusTarget.data.id,
+        childNodeIdsByParent,
+      );
+      for (const nodeId of subtreeNodeIds) {
+        keptNodeIds.add(nodeId);
       }
-      keptEdgeIds.add(edge.data.id);
-      keptNodeIds.add(edge.data.source);
-      keptNodeIds.add(edge.data.target);
+      for (const edge of edges) {
+        if (!subtreeNodeIds.has(edge.data.source) || !subtreeNodeIds.has(edge.data.target)) {
+          continue;
+        }
+        keptEdgeIds.add(edge.data.id);
+      }
+    } else if (focusType === "file") {
+      const focusSeedNodeIds = resolveFocusSeedNodeIds(
+        focusTarget,
+        state.summary.mode,
+        childNodeIdsByParent,
+      );
+      for (const nodeId of focusSeedNodeIds) {
+        keptNodeIds.add(nodeId);
+      }
+      for (const edge of edges) {
+        if (!focusSeedNodeIds.has(edge.data.source) && !focusSeedNodeIds.has(edge.data.target)) {
+          continue;
+        }
+        keptEdgeIds.add(edge.data.id);
+        keptNodeIds.add(edge.data.source);
+        keptNodeIds.add(edge.data.target);
+      }
+    } else if (focusType === "method") {
+      const focusSeedNodeIds = resolveFocusSeedNodeIds(
+        focusTarget,
+        state.summary.mode,
+        childNodeIdsByParent,
+      );
+      for (const nodeId of focusSeedNodeIds) {
+        keptNodeIds.add(nodeId);
+      }
+      for (const edge of edges) {
+        if (!focusSeedNodeIds.has(edge.data.source) && !focusSeedNodeIds.has(edge.data.target)) {
+          continue;
+        }
+        keptEdgeIds.add(edge.data.id);
+        keptNodeIds.add(edge.data.source);
+        keptNodeIds.add(edge.data.target);
+      }
+    } else {
+      return null;
     }
   }
 
@@ -556,13 +596,30 @@ function resolveFocusSeedNodeIds(focusTarget, mode, childNodeIdsByParent) {
   }
 
   const seedNodeIds = new Set([focusTarget.data.id]);
-  if (mode === "method" && focusTarget.data.kind === "file") {
+  if (mode === "method" && nodeType(focusTarget.data) === "file") {
     const methodChildIds = childNodeIdsByParent.get(focusTarget.data.id) || [];
     for (const nodeId of methodChildIds) {
       seedNodeIds.add(nodeId);
     }
   }
   return seedNodeIds;
+}
+
+function collectDescendantNodeIds(rootNodeId, childNodeIdsByParent) {
+  const nodeIds = new Set([rootNodeId]);
+  const pending = [rootNodeId];
+  while (pending.length > 0) {
+    const nodeId = pending.pop();
+    const childIds = childNodeIdsByParent.get(nodeId) || [];
+    for (const childId of childIds) {
+      if (nodeIds.has(childId)) {
+        continue;
+      }
+      nodeIds.add(childId);
+      pending.push(childId);
+    }
+  }
+  return nodeIds;
 }
 
 function expandAncestorNodes(nodeIds, nodesById) {
@@ -582,10 +639,10 @@ function expandAncestorNodes(nodeIds, nodesById) {
 function buildFocusSummary(mode, nodes, edges, focusData) {
   return {
     mode,
-    package_count: nodes.filter((node) => node.data.kind === "package").length,
-    file_count: nodes.filter((node) => node.data.kind === "file").length,
+    package_count: nodes.filter((node) => nodeType(node.data) === "package").length,
+    file_count: nodes.filter((node) => nodeType(node.data) === "file").length,
     method_count: mode === "method"
-      ? nodes.filter((node) => node.data.kind === "method").length
+      ? nodes.filter((node) => nodeType(node.data) === "method").length
       : 0,
     edge_count: edges.length,
     focus_label: focusSummaryLabel(focusData),
@@ -593,13 +650,13 @@ function buildFocusSummary(mode, nodes, edges, focusData) {
 }
 
 function focusSummaryLabel(data) {
-  if (data.kind === "file") {
+  if (nodeType(data) === "file") {
     return `Connected files for ${data.label}`;
   }
-  if (data.kind === "method") {
+  if (nodeType(data) === "method") {
     return `Connected methods for ${data.label}`;
   }
-  return `Call path ${data.label || data.expression || ""}`.trim();
+  return `Call path ${data.source_label || ""} -> ${data.target_label || ""}`.trim();
 }
 
 function shortFileLabel(node) {
@@ -635,7 +692,7 @@ function sortedEdges(edges) {
 function nodeSortKey(node) {
   const kindOrder = { package: "0", file: "1", method: "2" };
   return [
-    kindOrder[node.kind] || "9",
+    kindOrder[nodeType(node)] || "9",
     node.path || "",
     node.import_path || "",
     node.qualname || "",
@@ -700,8 +757,8 @@ function createLayoutConfig(mode) {
 
 function buildFileViewPositions(nodes) {
   const positions = new Map();
-  const packages = sortedNodes(nodes.filter((node) => node.kind === "package"));
-  const files = sortedNodes(nodes.filter((node) => node.kind === "file"));
+  const packages = sortedNodes(nodes.filter((node) => nodeType(node) === "package"));
+  const files = sortedNodes(nodes.filter((node) => nodeType(node) === "file"));
   const filesByPackage = groupBy(files, (node) => node.parent_id);
 
   const packageGapX = 220;
@@ -784,9 +841,9 @@ function buildFileViewPositions(nodes) {
 
 function buildMethodViewPositions(nodes) {
   const positions = new Map();
-  const packages = sortedNodes(nodes.filter((node) => node.kind === "package"));
-  const files = sortedNodes(nodes.filter((node) => node.kind === "file"));
-  const methods = sortedNodes(nodes.filter((node) => node.kind === "method"));
+  const packages = sortedNodes(nodes.filter((node) => nodeType(node) === "package"));
+  const files = sortedNodes(nodes.filter((node) => nodeType(node) === "file"));
+  const methods = sortedNodes(nodes.filter((node) => nodeType(node) === "method"));
   const filesByPackage = groupBy(files, (node) => node.parent_id);
   const methodsByFile = groupBy(methods, (node) => node.parent_id);
 
@@ -895,6 +952,32 @@ function buildMethodViewPositions(nodes) {
   }
 
   return positions;
+}
+
+function nodeType(node) {
+  if (node.node_type) {
+    return node.node_type;
+  }
+  if (node.qualname) {
+    return "method";
+  }
+  if (node.import_path) {
+    return "file";
+  }
+  return "package";
+}
+
+function edgeEndpointLabel(node) {
+  if (!node) {
+    return "";
+  }
+  if (nodeType(node) === "file") {
+    return shortFileLabel(node);
+  }
+  if (nodeType(node) === "package") {
+    return shortPackageLabel(node);
+  }
+  return node.label || node.id;
 }
 
 function applyPackagePacking(packageLayouts, packageGapX, packageGapY, startX, startY) {

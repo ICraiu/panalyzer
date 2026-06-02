@@ -6,12 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import AnalyzerConfig
-from .models import Method, MethodKind, MethodReference, Package, Project, SourceFile
+from .models import Method, MethodReference, Package, Project, SourceFile
 
 
 @dataclass
 class _DiscoveredSymbol:
-    kind: str
     name: str
     qualname: str
     signature: str
@@ -63,7 +62,6 @@ class _PythonFileAnalyzer(ast.NodeVisitor):
         qualname = f"{self.current_scope}.{node.name}"
         self.symbols.append(
             _DiscoveredSymbol(
-                kind="class",
                 name=node.name,
                 qualname=qualname,
                 signature=_render_class_signature(node),
@@ -76,25 +74,21 @@ class _PythonFileAnalyzer(ast.NodeVisitor):
         self.scope_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_function(node, kind="function")
+        self._visit_function(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_function(node, kind="async_function")
+        self._visit_function(node)
 
     def _visit_function(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        kind: str,
     ) -> None:
         qualname = f"{self.current_scope}.{node.name}"
-        if len(self.scope_stack) >= 2:
-            kind = "method"
         self.symbols.append(
             _DiscoveredSymbol(
-                kind=kind,
                 name=node.name,
                 qualname=qualname,
-                signature=_render_function_signature(node, kind),
+                signature=_render_function_signature(node),
                 file=str(self.file_path),
                 line=node.lineno,
             )
@@ -189,7 +183,6 @@ def _render_class_signature(node: ast.ClassDef) -> str:
 
 def _render_function_signature(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
-    kind: str,
 ) -> str:
     prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
     args = _render_arguments(node.args)
@@ -337,18 +330,13 @@ class PythonAnalyzer(ProjectAnalyzer):
                     name=symbol.name,
                     qualname=symbol.qualname,
                     signature=symbol.signature,
-                    kind=MethodKind(symbol.kind),
                     line=symbol.line,
-                    calls=[],
                 )
                 for symbol in symbols
             ]
-            method_map = {method.qualname: method for method in methods}
-            file_references: list[MethodReference] = []
 
             for edge in file_edges.get(import_path, []):
-                is_internal = edge.target in internal_methods
-                if not is_internal and not config.include_external_references:
+                if edge.target not in internal_methods and not config.include_external_references:
                     continue
 
                 reference = MethodReference(
@@ -356,34 +344,25 @@ class PythonAnalyzer(ProjectAnalyzer):
                     target_method=edge.target,
                     file_path=edge.file,
                     line=edge.line,
-                    expression=edge.raw_target,
-                    resolution=edge.confidence,
-                    internal=is_internal,
                 )
                 all_references.append(reference)
-
-                if edge.source == import_path:
-                    file_references.append(reference)
-                    continue
-
-                caller = method_map.get(edge.source)
-                if caller is not None:
-                    caller.calls.append(reference)
 
             source_files.append(
                 SourceFile(
                     path=file_path,
                     import_path=import_path,
-                    package=package_name,
                     methods=methods,
-                    file_references=file_references,
                 )
             )
 
         packages_by_name: dict[str, Package] = {}
         for source_file in sorted(source_files, key=lambda item: item.import_path):
             source_root = import_path_to_source_root[source_file.import_path]
-            package_name = source_file.package
+            package_name = _package_name_for_file(
+                source_root,
+                source_file.path,
+                source_file.import_path,
+            )
             package = packages_by_name.get(package_name)
             if package is None:
                 package = Package(
