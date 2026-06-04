@@ -96,6 +96,12 @@ class WebAppRuntime:
 
         return self.status()
 
+    def restart(self) -> WebAppStatus:
+        current = self.status()
+        if current.running:
+            self.stop()
+        return self.start()
+
     def status(self) -> WebAppStatus:
         ensure_app_config(self.config_path)
         state = load_runtime_state(self.state_path)

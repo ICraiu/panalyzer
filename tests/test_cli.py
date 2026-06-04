@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 import typer
@@ -113,6 +114,19 @@ def test_run_dispatches_to_subcommand_app(monkeypatch) -> None:
     assert called == ["app"]
 
 
+def test_restart_command_uses_runtime_restart(monkeypatch) -> None:
+    outputs: list[str] = []
+    monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append(value))
+    monkeypatch.setattr(
+        "project_analyzer.cli.WebAppRuntime.restart",
+        lambda self: SimpleNamespace(running=True, host="127.0.0.1", port=7000),
+    )
+
+    cli.restart()
+
+    assert outputs == ["Web app running on 127.0.0.1:7000"]
+
+
 def test_run_prints_help(monkeypatch) -> None:
     outputs: list[str] = []
     monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append(value))
@@ -123,6 +137,7 @@ def test_run_prints_help(monkeypatch) -> None:
     assert outputs[0].startswith("Usage:")
     assert "panalyzer-web" not in outputs[0]
     assert "-a, --all" in outputs[0]
+    assert "panalyzer restart" in outputs[0]
 
 
 def test_run_rejects_extra_args(monkeypatch) -> None:

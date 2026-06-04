@@ -35,6 +35,16 @@ def stop() -> None:
 
 
 @app.command()
+def restart() -> None:
+    """Restart the panalyzer web app, or start it if stopped."""
+
+    runtime = WebAppRuntime(Path.cwd())
+    status = runtime.restart()
+    state = "running" if status.running else "stopped"
+    typer.echo(f"Web app {state} on {status.host}:{status.port}")
+
+
+@app.command()
 def status() -> None:
     """Report whether the panalyzer web app is running."""
 
@@ -71,7 +81,7 @@ def run() -> None:
         return
 
     first = args[0]
-    if first in {"start", "stop", "status"}:
+    if first in {"start", "stop", "restart", "status"}:
         app()
         return
 
@@ -101,11 +111,13 @@ def _help_text() -> str:
   panalyzer -a <path>
   panalyzer start
   panalyzer stop
+  panalyzer restart
   panalyzer status
 
 Commands:
   start   Start the panalyzer web app.
   stop    Stop the panalyzer web app.
+  restart Restart the panalyzer web app, or start it if stopped.
   status  Report whether the panalyzer web app is running.
 
 Options:

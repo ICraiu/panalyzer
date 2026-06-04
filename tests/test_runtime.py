@@ -68,3 +68,32 @@ def test_runtime_status_clears_stale_pid_and_falls_back_to_config(tmp_path: Path
     assert status.host == "0.0.0.0"
     assert status.port == 7000
     assert not runtime.state_path.exists()
+
+
+def test_runtime_restart_starts_when_stopped(tmp_path: Path, monkeypatch) -> None:
+    save_app_config(tmp_path / "app.yaml", AppConfig())
+    runtime = WebAppRuntime(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(runtime, "status", lambda: SimpleNamespace(running=False))
+    monkeypatch.setattr(runtime, "start", lambda: calls.append("start") or SimpleNamespace(running=True, host="127.0.0.1", port=7000))
+
+    status = runtime.restart()
+
+    assert calls == ["start"]
+    assert status.running is True
+
+
+def test_runtime_restart_stops_then_starts_when_running(tmp_path: Path, monkeypatch) -> None:
+    save_app_config(tmp_path / "app.yaml", AppConfig())
+    runtime = WebAppRuntime(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(runtime, "status", lambda: SimpleNamespace(running=True))
+    monkeypatch.setattr(runtime, "stop", lambda: calls.append("stop") or SimpleNamespace(running=False, port=7000))
+    monkeypatch.setattr(runtime, "start", lambda: calls.append("start") or SimpleNamespace(running=True, host="127.0.0.1", port=7000))
+
+    status = runtime.restart()
+
+    assert calls == ["stop", "start"]
+    assert status.running is True

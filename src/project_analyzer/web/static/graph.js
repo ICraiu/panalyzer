@@ -204,7 +204,24 @@ async function loadGraph(url) {
       if (event.target.isEdge()) {
         highlightEdgeEndpoints(event.target);
         showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()));
+        return;
       }
+      showHovercard(
+        event.renderedPosition || event.position,
+        describeNodeHover(
+          event.target.data(),
+          collectNodeConnections(cy, event.target, currentMode),
+        ),
+      );
+    });
+    cy.on("mousemove", "node", (event) => {
+      showHovercard(
+        event.renderedPosition || event.position,
+        describeNodeHover(
+          event.target.data(),
+          collectNodeConnections(cy, event.target, currentMode),
+        ),
+      );
     });
     cy.on("mousemove", "edge", (event) => {
       highlightEdgeEndpoints(event.target);
@@ -215,7 +232,9 @@ async function loadGraph(url) {
       if (event.target.isEdge()) {
         clearEdgeEndpointHighlights(cy);
         hideHovercard();
+        return;
       }
+      hideHovercard();
     });
 
     const clearFocus = (event) => {
@@ -405,6 +424,34 @@ function describeEdge(data) {
           : ""
       }
       ${data.line ? `<div><strong>Line</strong> ${data.line}</div>` : ""}
+    </div>
+  `;
+}
+
+function describeNodeHover(data, connections) {
+  const incoming = connections.incoming || [];
+  const outgoing = connections.outgoing || [];
+  return `
+    <div class="hovercard-list">
+      <div><strong>${escapeHtml(nodeType(data))}</strong></div>
+      <div><code>${escapeHtml(data.label)}</code></div>
+      ${data.qualname ? `<div><strong>Qualified Name</strong></div><div><code>${escapeHtml(data.qualname)}</code></div>` : ""}
+      ${data.import_path ? `<div><strong>Import</strong></div><div><code>${escapeHtml(data.import_path)}</code></div>` : ""}
+      ${
+        outgoing.length > 0
+          ? `<div><strong>Outgoing</strong></div><div class="hovercard-methods">${outgoing.map((item) => `<code>${escapeHtml(item)}</code>`).join("")}</div>`
+          : ""
+      }
+      ${
+        incoming.length > 0
+          ? `<div><strong>Incoming</strong></div><div class="hovercard-methods">${incoming.map((item) => `<code>${escapeHtml(item)}</code>`).join("")}</div>`
+          : ""
+      }
+      ${
+        incoming.length === 0 && outgoing.length === 0
+          ? `<div><strong>Connections</strong></div><div><code>No visible links</code></div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -1035,4 +1082,51 @@ function highlightEdgeEndpoints(edge) {
 
 function clearEdgeEndpointHighlights(cy) {
   cy.nodes().removeClass("is-hovered");
+}
+
+function collectNodeConnections(cy, node, mode) {
+  const nodeIds = collectConnectionNodeIds(node, mode);
+  const incoming = [];
+  const outgoing = [];
+  const seenIncoming = new Set();
+  const seenOutgoing = new Set();
+
+  cy.edges(":visible").forEach((edge) => {
+    const sourceId = edge.data("source");
+    const targetId = edge.data("target");
+    const label = `${edge.data("source_label")} -> ${edge.data("target_label")}`;
+    if (nodeIds.has(sourceId)) {
+      if (!seenOutgoing.has(label)) {
+        seenOutgoing.add(label);
+        outgoing.push(label);
+      }
+    }
+    if (nodeIds.has(targetId)) {
+      if (!seenIncoming.has(label)) {
+        seenIncoming.add(label);
+        incoming.push(label);
+      }
+    }
+  });
+
+  incoming.sort();
+  outgoing.sort();
+  return { incoming, outgoing };
+}
+
+function collectConnectionNodeIds(node, mode) {
+  const ids = new Set([node.id()]);
+  const type = nodeType(node.data());
+  if (mode === "method" && (type === "file" || type === "package")) {
+    node.descendants().nodes().forEach((child) => {
+      ids.add(child.id());
+    });
+    return ids;
+  }
+  if (mode === "file" && type === "package") {
+    node.descendants().nodes().forEach((child) => {
+      ids.add(child.id());
+    });
+  }
+  return ids;
 }

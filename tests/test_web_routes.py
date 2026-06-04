@@ -161,11 +161,14 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert 'selector: "node:selected, node.is-hovered"' in graph_js
     assert 'selector: "edge:selected, edge.is-hovered"' in graph_js
     assert 'cy.on("mouseover", "node, edge"' in graph_js
+    assert 'cy.on("mousemove", "node"' in graph_js
     assert 'cy.on("mouseout", "node, edge"' in graph_js
     assert 'cy.on("mousemove", "edge"' in graph_js
     assert "Referenced Methods" in graph_js
     assert "referenced_methods" in graph_js
     assert 'const hovercard = document.getElementById("graph-hovercard");' in graph_js
+    assert "collectNodeConnections(cy, event.target, currentMode)" in graph_js
+    assert "function describeNodeHover(data, connections)" in graph_js
     assert "highlightEdgeEndpoints(event.target);" in graph_js
     assert "clearEdgeEndpointHighlights(cy);" in graph_js
     assert "showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()))" in graph_js
