@@ -139,12 +139,15 @@ def test_project_detail_and_graph_render_known_project() -> None:
     assert status == 200
     assert 'data-graph-url="/projects/abc123/graph"' in html
     assert "panalyzer-created-project" in html
+    assert 'id="graph-hovercard"' in html
+    assert 'id="selection-panel"' not in html
 
     status, content_type, payload = routes.project_graph("abc123")
     parsed = json.loads(payload.decode("utf-8"))
     assert status == 200
     assert content_type.startswith("application/json")
-    assert parsed["root"] == "/tmp/demo"
+    assert parsed["graph"]["root"] == "/tmp/demo"
+    assert parsed["diagram"]["root"] == "/tmp/demo"
 
 
 def test_static_asset_serving_blocks_path_escape() -> None:
@@ -159,9 +162,19 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert 'selector: "edge:selected, edge.is-hovered"' in graph_js
     assert 'cy.on("mouseover", "node, edge"' in graph_js
     assert 'cy.on("mouseout", "node, edge"' in graph_js
+    assert 'cy.on("mousemove", "edge"' in graph_js
+    assert "Referenced Methods" in graph_js
+    assert "referenced_methods" in graph_js
+    assert 'const hovercard = document.getElementById("graph-hovercard");' in graph_js
+    assert "showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()))" in graph_js
+    assert "hideHovercard();" in graph_js
+    assert "file: buildFileGraphState(payload.diagram)" in graph_js
+    assert "method: methodState" in graph_js
     assert "collectDescendantNodeIds(" in graph_js
     assert "!subtreeNodeIds.has(edge.data.source) || !subtreeNodeIds.has(edge.data.target)" in graph_js
     assert '(focusType === "file" && state.summary.mode === "method")' in graph_js
+    assert "const aggregatedEdges = diagram.transitions.map((transition) => {" in graph_js
+    assert "const sourceFileId = methodToFile.get(edge.source_id);" not in graph_js
     assert '"text-max-width": 220' in graph_js
     assert "width: 240" in graph_js
     assert "height: 52" in graph_js

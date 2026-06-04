@@ -162,16 +162,11 @@ class WebRoutes:
                       </select>
                     </label>
                   </div>
-                  <div class="graph-selection">
-                    <div class="sidebar-card">
-                      <h2>Selection</h2>
-                      <div id="selection-panel">Select a node or edge.</div>
-                    </div>
-                  </div>
                   <div class="graph-project-meta">
                     <div class="graph-project-meta__name">{escape(project.name)}</div>
                     <div class="graph-project-meta__path">{escape(project.path)}</div>
                   </div>
+                  <div class="graph-hovercard" id="graph-hovercard" hidden></div>
                   <div class="graph-loading" id="graph-loading" aria-live="polite">
                     <div class="graph-loading__spinner" aria-hidden="true"></div>
                     <div class="graph-loading__text">Loading graph…</div>
@@ -194,7 +189,13 @@ class WebRoutes:
         if project is None:
             return self.not_found()
         artifacts = self.context.analysis_service.analyze_project(Path(project.path))
-        payload = json.dumps(artifacts.graph.model_dump(mode="json"), indent=2).encode("utf-8")
+        payload = json.dumps(
+            {
+                "graph": artifacts.graph.model_dump(mode="json"),
+                "diagram": artifacts.diagram.model_dump(mode="json"),
+            },
+            indent=2,
+        ).encode("utf-8")
         return 200, "application/json; charset=utf-8", payload
 
     def static_asset(self, asset_name: str) -> tuple[int, str, bytes, dict[str, str]]:

@@ -72,6 +72,26 @@ def test_analyze_path_prints_diagram_json(tmp_path: Path, monkeypatch) -> None:
     assert '"nodes"' not in outputs[0]
 
 
+def test_analyze_path_with_all_prints_full_project_json(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    outputs: list[str] = []
+
+    monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append(value))
+    monkeypatch.setattr(
+        "project_analyzer.cli.ProjectAnalysisService.analyze_project",
+        lambda self, root: _sample_artifacts(root),
+    )
+
+    cli.analyze_path(str(project_root), include_all=True)
+
+    assert '"root"' in outputs[0]
+    assert '"packages"' in outputs[0]
+    assert '"references"' in outputs[0]
+    assert '"files"' not in outputs[0]
+    assert '"transitions"' not in outputs[0]
+
+
 def test_analyze_path_rejects_missing_path(tmp_path: Path, monkeypatch) -> None:
     outputs: list[tuple[str, bool]] = []
     monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append((value, err)))
@@ -102,6 +122,7 @@ def test_run_prints_help(monkeypatch) -> None:
 
     assert outputs[0].startswith("Usage:")
     assert "panalyzer-web" not in outputs[0]
+    assert "-a, --all" in outputs[0]
 
 
 def test_run_rejects_extra_args(monkeypatch) -> None:
@@ -118,9 +139,41 @@ def test_run_rejects_extra_args(monkeypatch) -> None:
 
 def test_run_defaults_to_current_directory(monkeypatch) -> None:
     called: list[str] = []
-    monkeypatch.setattr(cli, "analyze_path", lambda path=".": called.append(path))
+    monkeypatch.setattr(
+        cli,
+        "analyze_path",
+        lambda path=".", include_all=False: called.append((path, include_all)),
+    )
     monkeypatch.setattr(sys, "argv", ["panalyzer"])
 
     cli.run()
 
-    assert called == ["."]
+    assert called == [(".", False)]
+
+
+def test_run_supports_all_flag_without_path(monkeypatch) -> None:
+    called: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        cli,
+        "analyze_path",
+        lambda path=".", include_all=False: called.append((path, include_all)),
+    )
+    monkeypatch.setattr(sys, "argv", ["panalyzer", "-a"])
+
+    cli.run()
+
+    assert called == [(".", True)]
+
+
+def test_run_supports_all_flag_with_path(monkeypatch) -> None:
+    called: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        cli,
+        "analyze_path",
+        lambda path=".", include_all=False: called.append((path, include_all)),
+    )
+    monkeypatch.setattr(sys, "argv", ["panalyzer", "--all", "/tmp/demo"])
+
+    cli.run()
+
+    assert called == [("/tmp/demo", True)]

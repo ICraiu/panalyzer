@@ -46,8 +46,8 @@ def status() -> None:
     typer.echo(f"stopped host={current.host} port={current.port}")
 
 
-def analyze_path(path: str = ".") -> None:
-    """Analyze a Python project and print the package/file transition diagram JSON."""
+def analyze_path(path: str = ".", *, include_all: bool = False) -> None:
+    """Analyze a Python project and print the selected JSON view."""
 
     root = Path(path).resolve()
     if not root.exists():
@@ -58,7 +58,8 @@ def analyze_path(path: str = ".") -> None:
         raise typer.Exit(1)
 
     artifacts = ProjectAnalysisService().analyze_project(root)
-    typer.echo(artifacts.diagram.model_dump_json(indent=2))
+    document = artifacts.project if include_all else artifacts.diagram
+    typer.echo(document.model_dump_json(indent=2))
 
 
 def run() -> None:
@@ -78,16 +79,26 @@ def run() -> None:
         typer.echo(_help_text())
         return
 
-    if len(args) > 1:
-        typer.echo("Error: expected either a single path or a subcommand.", err=True)
-        raise typer.Exit(2)
-    analyze_path(first)
+    include_all = False
+    path: str | None = None
+    for arg in args:
+        if arg in {"-a", "--all"}:
+            include_all = True
+            continue
+        if path is not None:
+            typer.echo("Error: expected at most one path plus optional flags.", err=True)
+            raise typer.Exit(2)
+        path = arg
+
+    analyze_path(path or ".", include_all=include_all)
 
 
 def _help_text() -> str:
     return """Usage:
   panalyzer
   panalyzer <path>
+  panalyzer -a
+  panalyzer -a <path>
   panalyzer start
   panalyzer stop
   panalyzer status
@@ -96,6 +107,9 @@ Commands:
   start   Start the panalyzer web app.
   stop    Stop the panalyzer web app.
   status  Report whether the panalyzer web app is running.
+
+Options:
+  -a, --all   Print the full scan model including methods and references.
 """
 
 

@@ -1,5 +1,5 @@
 const root = document.getElementById("graph-root");
-const sidebar = document.getElementById("selection-panel");
+const hovercard = document.getElementById("graph-hovercard");
 const loading = document.getElementById("graph-loading");
 const viewMode = document.getElementById("graph-view-mode");
 
@@ -16,21 +16,20 @@ if (root) {
 
 async function loadGraph(url) {
   showLoading("Loading graph…");
-  sidebar.textContent = "Loading graph…";
   try {
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     if (!response.ok) {
       throw new Error("Failed to load graph data.");
     }
 
-    const graph = await response.json();
+    const payload = await response.json();
     if (!window.cytoscape) {
-      renderFallback(graph);
+      renderFallback(payload);
       hideLoading();
       return;
     }
 
-    const graphStates = buildGraphStates(graph);
+    const graphStates = buildGraphStates(payload);
     let currentMode = viewMode && viewMode.value === "method" ? "method" : "file";
 
     const cy = window.cytoscape({
@@ -170,6 +169,7 @@ async function loadGraph(url) {
     if (viewMode) {
       viewMode.addEventListener("change", () => {
         currentMode = viewMode.value === "file" ? "file" : "method";
+        hideHovercard();
         showLoading(`Switching to ${currentMode === "file" ? "file" : "method"} view…`);
         applyGraphState(cy, graphStates[currentMode], true);
       });
@@ -179,22 +179,20 @@ async function loadGraph(url) {
       const data = event.target.data();
       const focusedState = buildFocusedState(graphStates[currentMode], { type: "node", data });
       if (!focusedState) {
-        sidebar.innerHTML = describeNode(data);
         return;
       }
+      hideHovercard();
       applyFocus(cy, focusedState);
-      sidebar.innerHTML = describeNode(data, focusedState.summary.focus_label);
     };
 
     const focusEdge = (event) => {
       const data = event.target.data();
       const focusedState = buildFocusedState(graphStates[currentMode], { type: "edge", data });
       if (!focusedState) {
-        sidebar.innerHTML = describeEdge(data);
         return;
       }
+      hideHovercard();
       applyFocus(cy, focusedState);
-      sidebar.innerHTML = describeEdge(data, focusedState.summary.focus_label);
     };
 
     cy.on("tap", "node", focusNode);
@@ -203,13 +201,23 @@ async function loadGraph(url) {
     cy.on("click", "edge", focusEdge);
     cy.on("mouseover", "node, edge", (event) => {
       event.target.addClass("is-hovered");
+      if (event.target.isEdge()) {
+        showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()));
+      }
+    });
+    cy.on("mousemove", "edge", (event) => {
+      showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()));
     });
     cy.on("mouseout", "node, edge", (event) => {
       event.target.removeClass("is-hovered");
+      if (event.target.isEdge()) {
+        hideHovercard();
+      }
     });
 
     const clearFocus = (event) => {
       if (event.target === cy) {
+        hideHovercard();
         restoreFullGraph(cy, graphStates[currentMode]);
       }
     };
@@ -221,20 +229,21 @@ async function loadGraph(url) {
         return;
       }
       if (!root.contains(event.target)) {
+        hideHovercard();
         restoreFullGraph(cy, graphStates[currentMode]);
       }
     });
   } catch (error) {
     hideLoading();
-    sidebar.textContent = error instanceof Error ? error.message : "Failed to load graph data.";
+    hideHovercard();
   }
 }
 
-function buildGraphStates(graph) {
-  const methodState = buildMethodGraphState(graph);
+function buildGraphStates(payload) {
+  const methodState = buildMethodGraphState(payload.graph);
   return {
     method: methodState,
-    file: buildFileGraphState(graph),
+    file: buildFileGraphState(payload.diagram),
   };
 }
 
@@ -286,42 +295,21 @@ function buildMethodGraphState(graph) {
   };
 }
 
-function buildFileGraphState(graph) {
-  const packageNodes = graph.nodes.filter((node) => nodeType(node) === "package");
-  const fileNodes = graph.nodes.filter((node) => nodeType(node) === "file");
-  const methodNodes = graph.nodes.filter((node) => nodeType(node) === "method");
-
-  const fileById = new Map(fileNodes.map((node) => [node.id, node]));
-  const methodToFile = new Map(
-    methodNodes
-      .filter((node) => node.parent_id)
-      .map((node) => [node.id, node.parent_id]),
-  );
-
-  const aggregatedEdges = new Map();
-  for (const edge of graph.edges) {
-    const sourceFileId = methodToFile.get(edge.source_id);
-    const targetFileId = methodToFile.get(edge.target_id);
-    if (!sourceFileId || !targetFileId || sourceFileId === targetFileId) {
-      continue;
-    }
-    const key = `${sourceFileId}:${targetFileId}`;
-    if (!aggregatedEdges.has(key)) {
-      const sourceFile = fileById.get(sourceFileId);
-      const targetFile = fileById.get(targetFileId);
-      aggregatedEdges.set(key, {
-        id: `file_edge_${key}`,
-        source_id: sourceFileId,
-        target_id: targetFileId,
-        line: edge.line,
-        source_label: edgeEndpointLabel(sourceFile),
-        target_label: edgeEndpointLabel(targetFile),
-        call_count: 0,
-      });
-    }
-    aggregatedEdges.get(key).call_count += 1;
-  }
-
+function buildFileGraphState(diagram) {
+  const packageNodes = diagram.packages.map((pkg) => ({
+    id: pkg.id,
+    label: pkg.name,
+    path: pkg.path,
+    node_type: "package",
+  }));
+  const fileNodes = diagram.files.map((file) => ({
+    id: file.id,
+    label: file.import_path,
+    parent_id: file.package_id,
+    path: file.path,
+    import_path: file.import_path,
+    node_type: "file",
+  }));
   const collapsedNodes = [
     ...packageNodes.map((node) => ({
       ...node,
@@ -348,27 +336,38 @@ function buildFileGraphState(graph) {
     },
     position: positions.get(node.id),
   }));
-  const edges = Array.from(aggregatedEdges.values())
-    .sort((left, right) =>
-      `${left.source_id}:${left.target_id}`.localeCompare(`${right.source_id}:${right.target_id}`),
-    )
+  const diagramFileById = new Map(fileNodes.map((node) => [node.id, node]));
+  const aggregatedEdges = diagram.transitions.map((transition) => {
+    const sourceFile = diagramFileById.get(transition.source_file_id);
+    const targetFile = diagramFileById.get(transition.target_file_id);
+    return {
+      id: transition.id,
+      source_id: transition.source_file_id,
+      target_id: transition.target_file_id,
+      source_label: edgeEndpointLabel(sourceFile),
+      target_label: edgeEndpointLabel(targetFile),
+      referenced_methods: transition.referenced_methods || [],
+    };
+  });
+  const edges = aggregatedEdges
+    .sort((left, right) => left.id.localeCompare(right.id))
     .map((edge) => ({
-    data: {
-      id: edge.id,
-      source: edge.source_id,
-      target: edge.target_id,
-      source_label: edge.source_label,
-      target_label: edge.target_label,
-      line: edge.line,
-      call_count: edge.call_count,
-    },
+      data: {
+        id: edge.id,
+        source: edge.source_id,
+        target: edge.target_id,
+        source_label: edge.source_label,
+        target_label: edge.target_label,
+        referenced_methods: edge.referenced_methods,
+        view_mode: "file",
+      },
     }));
 
   return {
     elements: [...nodes, ...edges],
     summary: {
-      package_count: graph.summary.package_count,
-      file_count: graph.summary.file_count,
+      package_count: diagram.summary.package_count,
+      file_count: diagram.summary.file_count,
       method_count: 0,
       edge_count: edges.length,
       mode: "file",
@@ -389,61 +388,31 @@ function groupBy(items, keySelector) {
   return groups;
 }
 
-function describeSummary(summary) {
+function describeEdge(data) {
+  const referencedMethods = Array.isArray(data.referenced_methods)
+    ? data.referenced_methods
+    : [];
   return `
-    <div class="selection-list">
-      ${summary.focus_label ? `<div><strong>Focus</strong> ${escapeHtml(summary.focus_label)}</div>` : ""}
-      <div><strong>Mode</strong> ${summary.mode === "file" ? "Files" : "Methods"}</div>
-      <div><strong>Packages</strong> ${summary.package_count}</div>
-      <div><strong>Files</strong> ${summary.file_count}</div>
+    <div class="hovercard-list">
+      <div><strong>${data.view_mode === "file" ? "Dependency" : "Call"}</strong></div>
+      <div><code>${escapeHtml(`${data.source_label} -> ${data.target_label}`)}</code></div>
       ${
-        summary.mode === "method"
-          ? `<div><strong>Methods</strong> ${summary.method_count}</div>`
+        referencedMethods.length > 0
+          ? `<div><strong>Referenced Methods</strong></div><div class="hovercard-methods">${referencedMethods.map((method) => `<code>${escapeHtml(method)}</code>`).join("")}</div>`
           : ""
       }
-      <div><strong>Edges</strong> ${summary.edge_count}</div>
-    </div>
-  `;
-}
-
-function describeNode(data, focusLabel) {
-  return `
-    <div class="selection-list">
-      ${focusLabel ? `<div><strong>Focus</strong> ${escapeHtml(focusLabel)}</div>` : ""}
-      <div><strong>${escapeHtml(nodeType(data))}</strong></div>
-      <div>${escapeHtml(data.label)}</div>
-      ${data.qualname ? `<div><code>${escapeHtml(data.qualname)}</code></div>` : ""}
-      ${data.signature ? `<div><code>${escapeHtml(data.signature)}</code></div>` : ""}
-      ${data.import_path ? `<div><strong>Import</strong> <code>${escapeHtml(data.import_path)}</code></div>` : ""}
-      ${data.path ? `<div><strong>Path</strong> <code>${escapeHtml(data.path)}</code></div>` : ""}
       ${data.line ? `<div><strong>Line</strong> ${data.line}</div>` : ""}
     </div>
   `;
 }
 
-function describeEdge(data, focusLabel) {
-  return `
-    <div class="selection-list">
-      ${focusLabel ? `<div><strong>Focus</strong> ${escapeHtml(focusLabel)}</div>` : ""}
-      <div><strong>Call</strong></div>
-      <div><code>${escapeHtml(`${data.source_label} -> ${data.target_label}`)}</code></div>
-      ${
-        data.call_count
-          ? `<div><strong>Collapsed calls</strong> ${data.call_count}</div>`
-          : ""
-      }
-      <div><strong>Line</strong> ${data.line}</div>
-    </div>
-  `;
-}
-
-function renderFallback(graph) {
+function renderFallback(payload) {
   root.innerHTML = `
     <div class="empty-state">
       Cytoscape.js failed to load. The graph JSON is still available from this page.
     </div>
   `;
-  sidebar.innerHTML = describeSummary(graph.summary);
+  hideHovercard();
 }
 
 function showLoading(message) {
@@ -468,7 +437,7 @@ function applyGraphState(cy, state) {
   cy.elements().remove();
   cy.add(state.elements);
   cy.elements().removeClass("is-hidden");
-  sidebar.innerHTML = describeSummary(state.summary);
+  hideHovercard();
   const layout = cy.layout(state.layout);
   layout.once("layoutstop", () => {
     hideLoading();
@@ -483,7 +452,7 @@ function restoreFullGraph(cy, state) {
     return;
   }
   cy.elements().removeClass("is-hidden");
-  sidebar.innerHTML = describeSummary(state.summary);
+  hideHovercard();
   cy.fit(cy.elements(), state.layout.padding || 60);
   cy.center();
 }
@@ -497,7 +466,7 @@ function applyFocus(cy, state) {
     }
     element.addClass("is-hidden");
   });
-  sidebar.innerHTML = describeSummary(state.summary);
+  hideHovercard();
   cy.fit(cy.elements(":visible"), state.layout.padding || 60);
   cy.center();
 }
@@ -1022,4 +991,30 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function showHovercard(position, html) {
+  if (!hovercard || !position) {
+    return;
+  }
+  hovercard.innerHTML = html;
+  hovercard.hidden = false;
+  const offsetX = 18;
+  const offsetY = 18;
+  const cardWidth = hovercard.offsetWidth || 320;
+  const cardHeight = hovercard.offsetHeight || 180;
+  const maxLeft = Math.max(16, root.clientWidth - cardWidth - 16);
+  const maxTop = Math.max(16, root.clientHeight - cardHeight - 16);
+  const left = Math.min(maxLeft, Math.max(16, position.x + offsetX));
+  const top = Math.min(maxTop, Math.max(16, position.y + offsetY));
+  hovercard.style.left = `${left}px`;
+  hovercard.style.top = `${top}px`;
+}
+
+function hideHovercard() {
+  if (!hovercard) {
+    return;
+  }
+  hovercard.hidden = true;
+  hovercard.innerHTML = "";
 }

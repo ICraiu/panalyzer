@@ -113,7 +113,6 @@ a {
 
 .hero h1,
 .panel h2,
-.sidebar-card h2,
 .graph-project-meta__name {
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
 }
@@ -129,13 +128,11 @@ a {
 .hero p,
 .panel__header span,
 .project-card__path,
-#selection-panel,
 .empty-state,
 .flash,
 .form-hint,
 label,
-.graph-project-meta__path,
-.selection-list {
+.graph-project-meta__path {
   color: var(--muted);
 }
 
@@ -441,8 +438,8 @@ button:hover,
 
 .graph-nav,
 .graph-toolbar,
-.graph-selection,
-.graph-project-meta {
+.graph-project-meta,
+.graph-hovercard {
   animation: float-in 420ms ease both;
 }
 
@@ -467,16 +464,8 @@ button:hover,
   flex-wrap: wrap;
 }
 
-.graph-selection {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-  z-index: 3;
-  width: min(380px, calc(100vw - 48px));
-}
-
 .graph-project-meta,
-.sidebar-card {
+.graph-hovercard {
   border: 1px solid rgba(243, 248, 250, 0.1);
   border-radius: 22px;
   background:
@@ -564,37 +553,41 @@ button:hover,
   }
 }
 
-#selection-panel {
-  min-height: 80px;
-}
-
-.sidebar-card {
-  padding: 20px 20px 18px;
-}
-
-.sidebar-card h2 {
-  margin: 0 0 14px;
-  font-size: 1rem;
-  letter-spacing: -0.02em;
-}
-
-.selection-list {
+.hovercard-list {
   display: grid;
-  gap: 9px;
-  font-size: 0.95rem;
+  gap: 10px;
+  font-size: 0.92rem;
 }
 
-.selection-list strong {
+.hovercard-list strong {
   color: var(--muted-strong);
 }
 
-.selection-list code {
+.hovercard-list code {
   color: #f4f8fb;
   word-break: break-word;
   font-size: 0.9rem;
   padding: 2px 6px;
   border-radius: 8px;
   background: rgba(247, 242, 232, 0.05);
+}
+
+.hovercard-methods {
+  display: grid;
+  gap: 6px;
+}
+
+.graph-hovercard {
+  position: absolute;
+  z-index: 7;
+  width: min(360px, calc(100vw - 40px));
+  padding: 16px 18px;
+  pointer-events: none;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+}
+
+.graph-hovercard[hidden] {
+  display: none;
 }
 
 .empty-state {
@@ -632,16 +625,9 @@ code {
     top: 76px;
   }
 
-  .graph-selection {
-    top: auto;
-    bottom: 16px;
-    right: 16px;
-    width: min(350px, calc(100vw - 32px));
-  }
-
   .graph-project-meta {
     left: 16px;
-    bottom: 168px;
+    bottom: 16px;
     max-width: calc(100vw - 32px);
   }
 }
@@ -663,8 +649,8 @@ code {
   }
 
   .panel,
-  .sidebar-card,
-  .graph-project-meta {
+  .graph-project-meta,
+  .graph-hovercard {
     padding: 18px;
   }
 

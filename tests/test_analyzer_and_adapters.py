@@ -67,6 +67,10 @@ def test_architecture_graph_and_diagram_adapters_share_expected_structure(sample
         transition.target_import_path == "sample_pkg.module_a"
         for transition in diagram_document.transitions
     )
+    assert any(
+        "sample_pkg.module_a.Greeter.helper" in transition.referenced_methods
+        for transition in diagram_document.transitions
+    )
 
     assert architecture.summary.package_count == 1
     assert architecture.summary.file_count == 4

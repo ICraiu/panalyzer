@@ -28,6 +28,10 @@ class DiagramTransition(BaseModel):
     target_file_id: str = Field(description="Target file identifier")
     source_import_path: str = Field(description="Source file import path")
     target_import_path: str = Field(description="Target file import path")
+    referenced_methods: list[str] = Field(
+        default_factory=list,
+        description="Target methods referenced across this file-to-file dependency",
+    )
 
 
 class DiagramSummary(BaseModel):
