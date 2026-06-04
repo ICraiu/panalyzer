@@ -202,15 +202,18 @@ async function loadGraph(url) {
     cy.on("mouseover", "node, edge", (event) => {
       event.target.addClass("is-hovered");
       if (event.target.isEdge()) {
+        highlightEdgeEndpoints(event.target);
         showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()));
       }
     });
     cy.on("mousemove", "edge", (event) => {
+      highlightEdgeEndpoints(event.target);
       showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()));
     });
     cy.on("mouseout", "node, edge", (event) => {
       event.target.removeClass("is-hovered");
       if (event.target.isEdge()) {
+        clearEdgeEndpointHighlights(cy);
         hideHovercard();
       }
     });
@@ -1017,4 +1020,19 @@ function hideHovercard() {
   }
   hovercard.hidden = true;
   hovercard.innerHTML = "";
+}
+
+function highlightEdgeEndpoints(edge) {
+  const source = edge.source();
+  const target = edge.target();
+  if (source) {
+    source.addClass("is-hovered");
+  }
+  if (target) {
+    target.addClass("is-hovered");
+  }
+}
+
+function clearEdgeEndpointHighlights(cy) {
+  cy.nodes().removeClass("is-hovered");
 }

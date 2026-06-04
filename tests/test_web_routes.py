@@ -166,6 +166,8 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert "Referenced Methods" in graph_js
     assert "referenced_methods" in graph_js
     assert 'const hovercard = document.getElementById("graph-hovercard");' in graph_js
+    assert "highlightEdgeEndpoints(event.target);" in graph_js
+    assert "clearEdgeEndpointHighlights(cy);" in graph_js
     assert "showHovercard(event.renderedPosition || event.position, describeEdge(event.target.data()))" in graph_js
     assert "hideHovercard();" in graph_js
     assert "file: buildFileGraphState(payload.diagram)" in graph_js
