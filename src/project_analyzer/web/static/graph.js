@@ -2,6 +2,7 @@ const root = document.getElementById("graph-root");
 const hovercard = document.getElementById("graph-hovercard");
 const loading = document.getElementById("graph-loading");
 const viewMode = document.getElementById("graph-view-mode");
+const proposalStatus = document.getElementById("graph-proposal-status");
 
 if (window.cytoscape && window.cytoscapeElk) {
   window.cytoscape.use(window.cytoscapeElk);
@@ -18,11 +19,13 @@ async function loadGraph(url) {
   showLoading("Loading graph…");
   try {
     const response = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!response.ok) {
-      throw new Error("Failed to load graph data.");
-    }
-
     const payload = await response.json();
+    if (!response.ok) {
+      showGraphError(payload?.error?.message || "Failed to load graph data.");
+      hideLoading();
+      return;
+    }
+    renderProposalStatus(payload.graph?.active_proposal, payload.graph?.warnings || []);
     if (!window.cytoscape) {
       renderFallback(payload);
       hideLoading();
@@ -51,6 +54,27 @@ async function loadGraph(url) {
             width: "label",
             height: "label",
             padding: "10px",
+          },
+        },
+        {
+          selector: 'node[iteration_state = "add"]',
+          style: {
+            "border-color": "#7ee787",
+            "background-color": "#173324",
+          },
+        },
+        {
+          selector: 'node[iteration_state = "change"]',
+          style: {
+            "border-color": "#f1c95b",
+            "background-color": "#2a2416",
+          },
+        },
+        {
+          selector: 'node[iteration_state = "remove"]',
+          style: {
+            "border-color": "#ff6b6b",
+            "background-color": "#311819",
           },
         },
         {
@@ -139,6 +163,27 @@ async function loadGraph(url) {
             "taxi-turn-min-distance": 32,
             "taxi-radius": 12,
             opacity: 0.82,
+          },
+        },
+        {
+          selector: 'edge[iteration_state = "add"]',
+          style: {
+            "line-color": "#7ee787",
+            "target-arrow-color": "#7ee787",
+          },
+        },
+        {
+          selector: 'edge[iteration_state = "change"]',
+          style: {
+            "line-color": "#f1c95b",
+            "target-arrow-color": "#f1c95b",
+          },
+        },
+        {
+          selector: 'edge[iteration_state = "remove"]',
+          style: {
+            "line-color": "#ff6b6b",
+            "target-arrow-color": "#ff6b6b",
           },
         },
         {
@@ -265,7 +310,7 @@ function buildGraphStates(payload) {
   const methodState = buildMethodGraphState(payload.graph);
   return {
     method: methodState,
-    file: buildFileGraphState(payload.diagram),
+    file: buildFileGraphState(payload.graph),
   };
 }
 
@@ -289,6 +334,7 @@ function buildMethodGraphState(graph) {
       qualname: node.qualname,
       signature: node.signature,
       line: node.line,
+      iteration_state: node.iteration_state || "present",
     },
     position: positions.get(node.id),
   }));
@@ -301,6 +347,7 @@ function buildMethodGraphState(graph) {
       source_label: edgeEndpointLabel(nodeById.get(edge.source_id)),
       target_label: edgeEndpointLabel(nodeById.get(edge.target_id)),
       line: edge.line,
+      iteration_state: edge.iteration_state || "present",
     },
   }));
 
@@ -317,21 +364,30 @@ function buildMethodGraphState(graph) {
   };
 }
 
-function buildFileGraphState(diagram) {
-  const packageNodes = diagram.packages.map((pkg) => ({
-    id: pkg.id,
-    label: pkg.name,
-    path: pkg.path,
-    node_type: "package",
-  }));
-  const fileNodes = diagram.files.map((file) => ({
-    id: file.id,
-    label: file.import_path,
-    parent_id: file.package_id,
-    path: file.path,
-    import_path: file.import_path,
-    node_type: "file",
-  }));
+function buildFileGraphState(graph) {
+  const packageNodes = graph.nodes
+    .filter((node) => nodeType(node) === "package")
+    .map((pkg) => ({
+      id: pkg.id,
+      label: pkg.label,
+      path: pkg.path,
+      node_type: "package",
+      iteration_state: pkg.iteration_state || "present",
+    }));
+  const fileNodes = graph.nodes
+    .filter((node) => nodeType(node) === "file")
+    .map((file) => ({
+      id: file.id,
+      label: file.import_path,
+      parent_id: file.parent_id,
+      path: file.path,
+      import_path: file.import_path,
+      node_type: "file",
+      iteration_state: file.iteration_state || "present",
+    }));
+  const methodNodes = graph.nodes.filter((node) => nodeType(node) === "method");
+  const methodById = new Map(methodNodes.map((node) => [node.id, node]));
+  const fileById = new Map(fileNodes.map((node) => [node.id, node]));
   const collapsedNodes = [
     ...packageNodes.map((node) => ({
       ...node,
@@ -355,22 +411,50 @@ function buildFileGraphState(diagram) {
       qualname: node.qualname,
       signature: node.signature,
       line: node.line,
+      iteration_state: node.iteration_state || "present",
     },
     position: positions.get(node.id),
   }));
-  const diagramFileById = new Map(fileNodes.map((node) => [node.id, node]));
-  const aggregatedEdges = diagram.transitions.map((transition) => {
-    const sourceFile = diagramFileById.get(transition.source_file_id);
-    const targetFile = diagramFileById.get(transition.target_file_id);
-    return {
-      id: transition.id,
-      source_id: transition.source_file_id,
-      target_id: transition.target_file_id,
-      source_label: edgeEndpointLabel(sourceFile),
-      target_label: edgeEndpointLabel(targetFile),
-      referenced_methods: transition.referenced_methods || [],
-    };
+  const transitionsById = new Map();
+  graph.edges.forEach((edge) => {
+    const sourceMethod = methodById.get(edge.source_id);
+    const targetMethod = methodById.get(edge.target_id);
+    if (!sourceMethod || !targetMethod) {
+      return;
+    }
+    const sourceFileId = sourceMethod.parent_id;
+    const targetFileId = targetMethod.parent_id;
+    if (!sourceFileId || !targetFileId || sourceFileId === targetFileId) {
+      return;
+    }
+    const sourceFile = fileById.get(sourceFileId);
+    const targetFile = fileById.get(targetFileId);
+    if (!sourceFile || !targetFile) {
+      return;
+    }
+    const transitionId = `transition_${sourceFileId}_${targetFileId}`;
+    const current = transitionsById.get(transitionId);
+    if (!current) {
+      transitionsById.set(transitionId, {
+        id: transitionId,
+        source_id: sourceFileId,
+        target_id: targetFileId,
+        source_label: edgeEndpointLabel(sourceFile),
+        target_label: edgeEndpointLabel(targetFile),
+        referenced_methods: targetMethod.qualname ? [targetMethod.qualname] : [],
+        iteration_state: edge.iteration_state || "present",
+      });
+      return;
+    }
+    if (targetMethod.qualname && !current.referenced_methods.includes(targetMethod.qualname)) {
+      current.referenced_methods.push(targetMethod.qualname);
+    }
+    current.iteration_state = mergeTransitionState(current.iteration_state, edge.iteration_state || "present");
   });
+  const aggregatedEdges = [...transitionsById.values()].map((transition) => ({
+    ...transition,
+    referenced_methods: [...transition.referenced_methods].sort(),
+  }));
   const edges = aggregatedEdges
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((edge) => ({
@@ -382,14 +466,15 @@ function buildFileGraphState(diagram) {
         target_label: edge.target_label,
         referenced_methods: edge.referenced_methods,
         view_mode: "file",
+        iteration_state: edge.iteration_state || "present",
       },
     }));
 
   return {
     elements: [...nodes, ...edges],
     summary: {
-      package_count: diagram.summary.package_count,
-      file_count: diagram.summary.file_count,
+      package_count: packageNodes.length,
+      file_count: fileNodes.length,
       method_count: 0,
       edge_count: edges.length,
       mode: "file",
@@ -418,6 +503,7 @@ function describeEdge(data) {
     <div class="hovercard-list">
       <div><strong>${data.view_mode === "file" ? "Dependency" : "Call"}</strong></div>
       <div><code>${escapeHtml(`${data.source_label} -> ${data.target_label}`)}</code></div>
+      <div><strong>State</strong> ${escapeHtml(data.iteration_state || "present")}</div>
       ${
         referencedMethods.length > 0
           ? `<div><strong>Referenced Methods</strong></div><div class="hovercard-methods">${referencedMethods.map((method) => `<code>${escapeHtml(method)}</code>`).join("")}</div>`
@@ -435,6 +521,7 @@ function describeNodeHover(data, connections) {
     <div class="hovercard-list">
       <div><strong>${escapeHtml(nodeType(data))}</strong></div>
       <div><code>${escapeHtml(data.label)}</code></div>
+      <div><strong>State</strong> ${escapeHtml(data.iteration_state || "present")}</div>
       ${data.qualname ? `<div><strong>Qualified Name</strong></div><div><code>${escapeHtml(data.qualname)}</code></div>` : ""}
       ${data.import_path ? `<div><strong>Import</strong></div><div><code>${escapeHtml(data.import_path)}</code></div>` : ""}
       ${
@@ -465,6 +552,20 @@ function renderFallback(payload) {
   hideHovercard();
 }
 
+function showGraphError(message) {
+  hideHovercard();
+  if (proposalStatus) {
+    proposalStatus.hidden = false;
+    proposalStatus.classList.add("graph-proposal-status--error");
+    proposalStatus.innerHTML = `<strong>Proposal blocked</strong><div>${escapeHtml(message)}</div>`;
+  }
+  root.innerHTML = `
+    <div class="empty-state">
+      ${escapeHtml(message)}
+    </div>
+  `;
+}
+
 function showLoading(message) {
   if (!loading) {
     return;
@@ -481,6 +582,47 @@ function hideLoading() {
     return;
   }
   loading.classList.add("is-hidden");
+}
+
+function renderProposalStatus(activeProposal, warnings) {
+  if (!proposalStatus) {
+    return;
+  }
+  if (!activeProposal) {
+    proposalStatus.hidden = true;
+    proposalStatus.classList.remove("graph-proposal-status--error");
+    proposalStatus.innerHTML = "";
+    return;
+  }
+  const warningCount = Array.isArray(warnings) ? warnings.length : 0;
+  const warningItems = Array.isArray(warnings)
+    ? warnings.map((warning) => `<li>${escapeHtml(warning.message || warning.code || "Warning")}</li>`).join("")
+    : "";
+  proposalStatus.hidden = false;
+  proposalStatus.classList.remove("graph-proposal-status--error");
+  proposalStatus.innerHTML = `
+    <div><strong>Active proposal</strong> ${escapeHtml(activeProposal.name)}</div>
+    <div><code>${escapeHtml(activeProposal.id)}</code></div>
+    <div>${warningCount} warning${warningCount === 1 ? "" : "s"}</div>
+    ${warningCount > 0 ? `<ul class="graph-proposal-status__warnings">${warningItems}</ul>` : ""}
+  `;
+}
+
+function mergeTransitionState(left, right) {
+  if (left === right) {
+    return left;
+  }
+  const states = new Set([left, right]);
+  if (states.has("change")) {
+    return "change";
+  }
+  if (states.has("add") && states.has("remove")) {
+    return "change";
+  }
+  if (states.has("add") || states.has("remove")) {
+    return "change";
+  }
+  return "present";
 }
 
 function applyGraphState(cy, state) {

@@ -25,8 +25,13 @@ class AppProjectConfig(BaseModel):
     path: str
 
 
+class AppStorageConfig(BaseModel):
+    proposals_root: str = Field(default=".panalyzer/proposals")
+
+
 class AppConfig(BaseModel):
     server: AppServerConfig = Field(default_factory=AppServerConfig)
+    storage: AppStorageConfig = Field(default_factory=AppStorageConfig)
     projects: list[AppProjectConfig] = Field(default_factory=list)
 
 
@@ -79,6 +84,13 @@ def resolve_server_config(config: AppConfig) -> AppServerConfig:
     except ValueError:
         return config.server
     return AppServerConfig(host=config.server.host, port=port)
+
+
+def resolve_proposals_root(base_dir: Path, config: AppConfig) -> Path:
+    configured = Path(config.storage.proposals_root).expanduser()
+    if configured.is_absolute():
+        return configured
+    return (base_dir / configured).resolve()
 
 
 def _existing_app_config_path(config_path: Path) -> Path | None:

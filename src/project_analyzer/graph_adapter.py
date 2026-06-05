@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from .architecture_adapter import ArchitectureDocumentAdapter, _is_constructor_edge_shadowed
 from .models import (
-    ArchitectureFileNode,
-    ArchitectureMethodNode,
-    ArchitecturePackageNode,
     GraphDocument,
     GraphEdge,
     GraphFileNode,
@@ -13,53 +9,54 @@ from .models import (
     GraphSummary,
     Project,
 )
+from .presentation import display_name, node_id
 
 
 class GraphDocumentAdapter:
     """Build interactive graph data from the project domain."""
 
     def to_document(self, project: Project) -> GraphDocument:
-        architecture = ArchitectureDocumentAdapter().to_document(project)
         nodes: list[GraphPackageNode | GraphFileNode | GraphMethodNode] = []
-        for node in architecture.nodes:
-            if isinstance(node, ArchitecturePackageNode):
-                nodes.append(
-                    GraphPackageNode(
-                        id=node.id,
-                        label=node.label,
-                        path=node.path,
-                    )
+        method_node_ids: dict[str, str] = {}
+
+        for package in project.packages:
+            package_id = node_id("pkg", package.name)
+            nodes.append(
+                GraphPackageNode(
+                    id=package_id,
+                    label=package.name,
+                    path=package.path,
                 )
-            elif isinstance(node, ArchitectureFileNode):
+            )
+
+            for source_file in package.files:
+                file_id = node_id("file", source_file.import_path)
                 nodes.append(
                     GraphFileNode(
-                        id=node.id,
-                        label=node.label,
-                        parent_id=node.parent_id,
-                        path=node.path,
-                        import_path=node.import_path,
-                    )
-                )
-            else:
-                assert isinstance(node, ArchitectureMethodNode)
-                nodes.append(
-                    GraphMethodNode(
-                        id=node.id,
-                        label=node.label,
-                        parent_id=node.parent_id,
-                        path=node.path,
-                        import_path=node.import_path,
-                        qualname=node.qualname,
-                        signature=node.signature,
-                        line=node.line,
+                        id=file_id,
+                        label=source_file.import_path,
+                        parent_id=package_id,
+                        path=source_file.path,
+                        import_path=source_file.import_path,
                     )
                 )
 
-        method_node_ids = {
-            node.qualname: node.id
-            for node in architecture.nodes
-            if isinstance(node, ArchitectureMethodNode)
-        }
+                for method in source_file.methods:
+                    method_id = node_id("method", method.qualname)
+                    nodes.append(
+                        GraphMethodNode(
+                            id=method_id,
+                            label=_method_display_label(method.name, method.signature, method.line),
+                            parent_id=file_id,
+                            path=source_file.path,
+                            import_path=source_file.import_path,
+                            qualname=method.qualname,
+                            signature=method.signature,
+                            line=method.line,
+                        )
+                    )
+                    method_node_ids[method.qualname] = method_id
+
         line_targets_by_source: dict[tuple[str, int], set[str]] = {}
         for reference in project.references:
             if reference.source_method is None:
@@ -100,11 +97,31 @@ class GraphDocumentAdapter:
         return GraphDocument(
             root=project.root,
             summary=GraphSummary(
-                package_count=architecture.summary.package_count,
-                file_count=architecture.summary.file_count,
-                method_count=architecture.summary.method_count,
+                package_count=len(project.packages),
+                file_count=sum(len(package.files) for package in project.packages),
+                method_count=sum(
+                    len(source_file.methods)
+                    for package in project.packages
+                    for source_file in package.files
+                ),
                 edge_count=len(edges),
             ),
-            nodes=nodes,
+            nodes=sorted(nodes, key=lambda item: item.id),
             edges=edges,
         )
+
+
+def _method_display_label(name: str, signature: str, line: int) -> str:
+    method_name = display_name(name)
+    if signature.startswith("class "):
+        return f"class {method_name} | L{line}"
+    return f"{method_name}(...) | L{line}"
+
+
+def _is_constructor_edge_shadowed(
+    reference,
+    line_targets_by_source: dict[tuple[str, int], set[str]],
+) -> bool:
+    targets = line_targets_by_source.get((reference.source_method, reference.line), set())
+    prefix = f"{reference.target_method}."
+    return any(target.startswith(prefix) for target in targets)

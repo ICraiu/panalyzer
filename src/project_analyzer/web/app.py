@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..services import ProjectAnalysisService, ProjectRegistry
+from ..services import ProjectService, ProposalService
 
 
 @dataclass
 class WebAppContext:
     base_dir: Path
-    registry: ProjectRegistry
-    analysis_service: ProjectAnalysisService
+    project_service: ProjectService
+    proposal_service: ProposalService

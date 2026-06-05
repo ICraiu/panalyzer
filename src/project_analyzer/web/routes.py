@@ -7,6 +7,7 @@ import json
 
 from .app import WebAppContext
 from ..app_config import DEFAULT_PORT
+from ..services import ProposalApplicationError
 
 
 class WebRoutes:
@@ -24,10 +25,10 @@ class WebRoutes:
         error: str | None = None,
         message: str | None = None,
     ) -> tuple[int, str, bytes]:
-        projects = self.context.registry.list_projects()
+        projects = self.context.project_service.list_projects()
         cards = "\n".join(
             f"""
-            <article class="project-card" data-project-id="{project.id}">
+            <article class="project-card" data-project-id="{project.id}" data-project-href="/projects/{project.id}" tabindex="0" role="link">
               <a class="project-card__link" href="/projects/{project.id}">
                 <div class="project-card__title">{escape(project.name)}</div>
                 <div class="project-card__path">{escape(project.path)}</div>
@@ -105,7 +106,31 @@ class WebRoutes:
                 window.location.reload();
               }}
 
+              function enableProjectCardNavigation() {{
+                const cards = document.querySelectorAll("[data-project-href]");
+                for (const card of cards) {{
+                  const href = card.getAttribute("data-project-href");
+                  if (!href) {{
+                    continue;
+                  }}
+                  card.addEventListener("click", (event) => {{
+                    if (event.target instanceof Element && event.target.closest("button, a, form")) {{
+                      return;
+                    }}
+                    window.location.href = href;
+                  }});
+                  card.addEventListener("keydown", (event) => {{
+                    if (event.key !== "Enter" && event.key !== " ") {{
+                      return;
+                    }}
+                    event.preventDefault();
+                    window.location.href = href;
+                  }});
+                }}
+              }}
+
               window.addEventListener("pageshow", syncCreatedProjectCard);
+              window.addEventListener("DOMContentLoaded", enableProjectCardNavigation);
             </script>
             """,
         )
@@ -115,23 +140,24 @@ class WebRoutes:
         form = parse_qs(body.decode("utf-8"))
         path = form.get("path", [""])[0]
         try:
-            project = self.context.registry.add_project(path)
+            project = self.context.project_service.add_project(path)
         except ValueError as exc:
             status, content_type, payload = self.homepage(str(exc))
             return status, content_type, payload, {}
         return 303, "text/plain; charset=utf-8", b"", {"Location": f"/projects/{project.id}?created=1"}
 
     def delete_project(self, project_id: str) -> tuple[int, str, bytes, dict[str, str]]:
-        deleted = self.context.registry.delete_project(project_id)
+        deleted = self.context.project_service.delete_project(project_id)
         if not deleted:
             status, content_type, payload = self.not_found()
             return status, content_type, payload, {}
         return 303, "text/plain; charset=utf-8", b"", {"Location": "/?message=Project+deleted"}
 
     def project_detail(self, project_id: str, created: bool = False) -> tuple[int, str, bytes]:
-        project = self.context.registry.get_project(project_id)
-        if project is None:
+        project_context = self.context.project_service.get_project_context(project_id)
+        if project_context is None:
             return self.not_found()
+        project = project_context.registration
 
         created_script = ""
         if created:
@@ -166,6 +192,7 @@ class WebRoutes:
                     <div class="graph-project-meta__name">{escape(project.name)}</div>
                     <div class="graph-project-meta__path">{escape(project.path)}</div>
                   </div>
+                  <div class="graph-proposal-status" id="graph-proposal-status" hidden></div>
                   <div class="graph-hovercard" id="graph-hovercard" hidden></div>
                   <div class="graph-loading" id="graph-loading" aria-live="polite">
                     <div class="graph-loading__spinner" aria-hidden="true"></div>
@@ -185,18 +212,75 @@ class WebRoutes:
         return 200, "text/html; charset=utf-8", html.encode("utf-8")
 
     def project_graph(self, project_id: str) -> tuple[int, str, bytes]:
-        project = self.context.registry.get_project(project_id)
-        if project is None:
+        project_context = self.context.project_service.get_project_context(project_id)
+        if project_context is None:
             return self.not_found()
-        artifacts = self.context.analysis_service.analyze_project(Path(project.path))
+        try:
+            graph, diagram = self.context.proposal_service.analyze_with_latest(
+                project_id=project_id,
+                project_root=Path(project_context.registration.path),
+                project=project_context.analysis.project,
+            )
+        except ProposalApplicationError as exc:
+            payload = json.dumps(
+                {
+                    "error": {
+                        "code": exc.code,
+                        "message": exc.message,
+                        "errors": [issue.model_dump(mode="json") for issue in exc.errors],
+                    }
+                },
+                indent=2,
+            ).encode("utf-8")
+            return 409, "application/json; charset=utf-8", payload
         payload = json.dumps(
             {
-                "graph": artifacts.graph.model_dump(mode="json"),
-                "diagram": artifacts.diagram.model_dump(mode="json"),
+                "graph": graph.model_dump(mode="json"),
             },
             indent=2,
         ).encode("utf-8")
         return 200, "application/json; charset=utf-8", payload
+
+    def add_proposal(self, project_id: str, body: bytes) -> tuple[int, str, bytes, dict[str, str]]:
+        project_context = self.context.project_service.get_project_context(project_id)
+        if project_context is None:
+            status, content_type, payload = self.not_found()
+            return status, content_type, payload, {}
+
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            response = json.dumps(
+                {
+                    "valid": False,
+                    "warnings": [],
+                    "errors": [
+                        {
+                            "code": "invalid_json",
+                            "path": "$",
+                            "message": f"Request body is not valid JSON: {exc.msg}",
+                        }
+                    ],
+                },
+                indent=2,
+            ).encode("utf-8")
+            return 400, "application/json; charset=utf-8", response, {}
+
+        result = self.context.proposal_service.save(
+            project_id=project_id,
+            project_root=Path(project_context.registration.path),
+            project=project_context.analysis.project,
+            payload=payload,
+        )
+        status = 201 if result.validation.valid else 202
+        response = json.dumps(
+            {
+                "proposal": result.proposal.model_dump(mode="json"),
+                "validation": result.validation.model_dump(mode="json"),
+            },
+            indent=2,
+        ).encode("utf-8")
+        return status, "application/json; charset=utf-8", response, {}
 
     def static_asset(self, asset_name: str) -> tuple[int, str, bytes, dict[str, str]]:
         base_dir = Path(__file__).resolve().parent / "static"

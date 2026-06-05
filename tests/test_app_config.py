@@ -6,8 +6,10 @@ from project_analyzer.app_config import (
     AppConfig,
     AppProjectConfig,
     AppServerConfig,
+    AppStorageConfig,
     ensure_app_config,
     load_app_config,
+    resolve_proposals_root,
     resolve_server_config,
     save_app_config,
 )
@@ -17,6 +19,7 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
     config_path = tmp_path / "app.yaml"
     config = AppConfig(
         server=AppServerConfig(host="127.0.0.1", port=7010),
+        storage=AppStorageConfig(proposals_root=".panalyzer/proposals"),
         projects=[AppProjectConfig(name="demo", path="/tmp/demo")],
     )
 
@@ -68,3 +71,11 @@ def test_resolve_server_config_ignores_invalid_environment(monkeypatch) -> None:
     resolved = resolve_server_config(config)
 
     assert resolved == config.server
+
+
+def test_resolve_proposals_root_resolves_relative_path(tmp_path: Path) -> None:
+    config = AppConfig(storage=AppStorageConfig(proposals_root=".panalyzer/proposals"))
+
+    resolved = resolve_proposals_root(tmp_path, config)
+
+    assert resolved == (tmp_path / ".panalyzer/proposals").resolve()

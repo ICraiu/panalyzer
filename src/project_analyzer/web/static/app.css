@@ -308,12 +308,14 @@ button:hover,
     linear-gradient(180deg, rgba(14, 24, 35, 0.96), rgba(8, 15, 23, 0.92));
   box-shadow: var(--shadow-soft);
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  cursor: pointer;
 }
 
 .project-card::before {
   content: "";
   position: absolute;
   inset: 0;
+  pointer-events: none;
   background:
     linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.08) 48%, transparent 60%);
   transform: translateX(-120%);
@@ -341,6 +343,17 @@ button:hover,
   display: flex;
   justify-content: flex-end;
   padding: 0 22px 22px;
+}
+
+.project-card__actions .button--danger {
+  padding: 8px 14px;
+  font-size: 0.84rem;
+  background: transparent;
+  box-shadow: none;
+}
+
+.project-card__actions .button--danger:hover {
+  box-shadow: none;
 }
 
 .project-card__title {
@@ -438,6 +451,7 @@ button:hover,
 
 .graph-nav,
 .graph-toolbar,
+.graph-proposal-status,
 .graph-project-meta,
 .graph-hovercard {
   animation: float-in 420ms ease both;
@@ -464,6 +478,7 @@ button:hover,
   flex-wrap: wrap;
 }
 
+.graph-proposal-status,
 .graph-project-meta,
 .graph-hovercard {
   border: 1px solid rgba(243, 248, 250, 0.1);
@@ -472,6 +487,32 @@ button:hover,
     linear-gradient(180deg, rgba(8, 18, 27, 0.84), rgba(6, 14, 22, 0.78));
   backdrop-filter: blur(26px);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+}
+
+.graph-proposal-status {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+  z-index: 4;
+  width: min(340px, calc(100vw - 48px));
+  padding: 16px 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.graph-proposal-status__warnings {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 0.88rem;
+  color: var(--muted-strong);
+}
+
+.graph-proposal-status--error {
+  border-color: rgba(255, 107, 107, 0.55);
+  background:
+    linear-gradient(180deg, rgba(39, 11, 15, 0.92), rgba(21, 8, 10, 0.88));
 }
 
 .graph-project-meta {
@@ -619,6 +660,11 @@ code {
   .graph-toolbar {
     top: 16px;
     left: 16px;
+  }
+
+  .graph-proposal-status {
+    right: 16px;
+    top: 16px;
   }
 
   .graph-toolbar {

@@ -7,6 +7,7 @@ from .models import (
     DiagramPackage,
     DiagramSummary,
     DiagramTransition,
+    GraphDocument,
     GraphFileNode,
     GraphMethodNode,
     GraphPackageNode,
@@ -19,7 +20,9 @@ class DiagramDocumentAdapter:
 
     def to_document(self, project: Project) -> DiagramDocument:
         graph = GraphDocumentAdapter().to_document(project)
+        return self.to_document_from_graph(graph)
 
+    def to_document_from_graph(self, graph: GraphDocument) -> DiagramDocument:
         packages: list[DiagramPackage] = []
         files: list[DiagramFile] = []
         file_by_id: dict[str, GraphFileNode] = {}
@@ -33,6 +36,7 @@ class DiagramDocumentAdapter:
                         id=node.id,
                         name=node.label,
                         path=node.path,
+                        iteration_state=node.iteration_state,
                     )
                 )
             elif isinstance(node, GraphFileNode):
@@ -42,6 +46,7 @@ class DiagramDocumentAdapter:
                         package_id=node.parent_id,
                         import_path=node.import_path,
                         path=node.path,
+                        iteration_state=node.iteration_state,
                     )
                 )
                 file_by_id[node.id] = node
@@ -70,6 +75,7 @@ class DiagramDocumentAdapter:
                     target_file_id=target_file_id,
                     source_import_path=source_file.import_path,
                     target_import_path=target_file.import_path,
+                    iteration_state=edge.iteration_state,
                 )
                 transition = transitions_by_id[transition_id]
             target_method = method_qualname_by_id.get(edge.target_id)
@@ -77,6 +83,10 @@ class DiagramDocumentAdapter:
                 continue
             if target_method not in transition.referenced_methods:
                 transition.referenced_methods.append(target_method)
+            transition.iteration_state = _merge_transition_state(
+                transition.iteration_state,
+                edge.iteration_state,
+            )
 
         packages.sort(key=lambda item: item.id)
         files.sort(key=lambda item: item.id)
@@ -85,7 +95,7 @@ class DiagramDocumentAdapter:
         transitions = sorted(transitions_by_id.values(), key=lambda item: item.id)
 
         return DiagramDocument(
-            root=project.root,
+            root=graph.root,
             summary=DiagramSummary(
                 package_count=len(packages),
                 file_count=len(files),
@@ -95,3 +105,20 @@ class DiagramDocumentAdapter:
             files=files,
             transitions=transitions,
         )
+
+
+def _merge_transition_state(left, right):
+    if left == right:
+        return left
+    states = {left.value, right.value}
+    if states == {"add"}:
+        return left
+    if states == {"remove"}:
+        return left
+    if "change" in states:
+        return left.__class__.CHANGE
+    if "add" in states and "remove" in states:
+        return left.__class__.CHANGE
+    if "add" in states or "remove" in states:
+        return left.__class__.CHANGE
+    return left.__class__.PRESENT

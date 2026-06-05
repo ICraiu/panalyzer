@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .proposal import IterationState, ProposalSummary, ValidationIssue
+
 
 class GraphPackageNode(BaseModel):
     """Interactive package node for the web viewer."""
@@ -9,6 +11,7 @@ class GraphPackageNode(BaseModel):
     id: str = Field(description="Stable node identifier")
     label: str = Field(description="Display label")
     path: str = Field(description="Absolute filesystem path")
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class GraphFileNode(BaseModel):
@@ -19,6 +22,7 @@ class GraphFileNode(BaseModel):
     parent_id: str = Field(description="Containing package node identifier")
     path: str = Field(description="Absolute filesystem path")
     import_path: str = Field(description="Python import path")
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class GraphMethodNode(BaseModel):
@@ -32,6 +36,7 @@ class GraphMethodNode(BaseModel):
     qualname: str = Field(description="Qualified symbol name")
     signature: str = Field(description="Method or class signature")
     line: int = Field(description="Source line number")
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class GraphEdge(BaseModel):
@@ -41,6 +46,7 @@ class GraphEdge(BaseModel):
     source_id: str = Field(description="Caller node identifier")
     target_id: str = Field(description="Callee node identifier")
     line: int = Field(description="Source line number of the call")
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class GraphSummary(BaseModel):
@@ -62,3 +68,5 @@ class GraphDocument(BaseModel):
         description="Graph nodes",
     )
     edges: list[GraphEdge] = Field(default_factory=list, description="Graph edges")
+    active_proposal: ProposalSummary | None = Field(default=None)
+    warnings: list[ValidationIssue] = Field(default_factory=list)

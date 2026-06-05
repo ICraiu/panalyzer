@@ -6,8 +6,13 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
-from ..app_config import ensure_app_config, load_app_config, resolve_server_config
-from ..services import ProjectAnalysisService, ProjectRegistry
+from ..app_config import (
+    ensure_app_config,
+    load_app_config,
+    resolve_proposals_root,
+    resolve_server_config,
+)
+from ..services import ProjectAnalysisService, ProjectRegistry, ProjectService, ProposalService, ProposalStore
 from .app import WebAppContext
 from .routes import WebRoutes
 
@@ -18,8 +23,11 @@ def serve(config_path: Path) -> None:
     server_config = resolve_server_config(config)
     context = WebAppContext(
         base_dir=config_path.parent.resolve(),
-        registry=ProjectRegistry(config_path),
-        analysis_service=ProjectAnalysisService(),
+        project_service=ProjectService(
+            registry=ProjectRegistry(config_path),
+            analysis_service=ProjectAnalysisService(),
+        ),
+        proposal_service=ProposalService(ProposalStore(resolve_proposals_root(config_path.parent.resolve(), config))),
     )
     routes = WebRoutes(context)
     handler_class = _build_handler(routes)
@@ -72,6 +80,13 @@ def _build_handler(routes: WebRoutes) -> type[BaseHTTPRequestHandler]:
             if parsed.path.startswith("/projects/") and parsed.path.endswith("/delete"):
                 project_id = parsed.path.removeprefix("/projects/").removesuffix("/delete").strip("/")
                 status, content_type, payload, headers = routes.delete_project(project_id)
+                self._send(status, content_type, payload, headers=headers)
+                return
+            if parsed.path.startswith("/projects/") and parsed.path.endswith("/proposals"):
+                project_id = parsed.path.removeprefix("/projects/").removesuffix("/proposals").strip("/")
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length)
+                status, content_type, payload, headers = routes.add_proposal(project_id, body)
                 self._send(status, content_type, payload, headers=headers)
                 return
             else:

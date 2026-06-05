@@ -9,8 +9,6 @@ import typer
 
 from project_analyzer import cli
 from project_analyzer.models import (
-    ArchitectureDocument,
-    ArchitectureSummary,
     DiagramDocument,
     DiagramSummary,
     GraphDocument,
@@ -29,18 +27,6 @@ def _sample_artifacts(root: Path) -> AnalysisArtifacts:
             packages=[],
             files=[],
             transitions=[],
-        ),
-        architecture=ArchitectureDocument(
-            root=str(root),
-            summary=ArchitectureSummary(
-                package_count=0,
-                file_count=0,
-                method_count=0,
-                internal_call_count=0,
-            ),
-            sections=[],
-            nodes=[],
-            edges=[],
         ),
         graph=GraphDocument(
             root=str(root),

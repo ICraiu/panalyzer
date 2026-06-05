@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .proposal import IterationState
+
 
 class DiagramPackage(BaseModel):
     """A package included in the exported architecture diagram."""
@@ -9,6 +11,7 @@ class DiagramPackage(BaseModel):
     id: str = Field(description="Stable package identifier")
     name: str = Field(description="Dotted package name")
     path: str = Field(description="Absolute filesystem path")
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class DiagramFile(BaseModel):
@@ -18,6 +21,7 @@ class DiagramFile(BaseModel):
     package_id: str = Field(description="Containing package identifier")
     import_path: str = Field(description="Python import path")
     path: str = Field(description="Absolute filesystem path")
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class DiagramTransition(BaseModel):
@@ -32,6 +36,7 @@ class DiagramTransition(BaseModel):
         default_factory=list,
         description="Target methods referenced across this file-to-file dependency",
     )
+    iteration_state: IterationState = Field(default=IterationState.PRESENT)
 
 
 class DiagramSummary(BaseModel):
