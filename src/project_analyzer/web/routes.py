@@ -79,6 +79,10 @@ class WebRoutes:
                 </div>
               </section>
             </main>
+            <div class="page-loading is-hidden" id="page-loading" aria-live="polite" aria-hidden="true">
+              <div class="page-loading__spinner" aria-hidden="true"></div>
+              <div class="page-loading__text">Opening project…</div>
+            </div>
             <script>
               const createdProjectKey = "panalyzer-created-project";
               const createdProjectReloadKey = "panalyzer-created-project-reloaded";
@@ -107,16 +111,36 @@ class WebRoutes:
               }}
 
               function enableProjectCardNavigation() {{
+                const pageLoading = document.getElementById("page-loading");
+                const showPageLoading = (message) => {{
+                  if (!pageLoading) {{
+                    return;
+                  }}
+                  const text = pageLoading.querySelector(".page-loading__text");
+                  if (text) {{
+                    text.textContent = message;
+                  }}
+                  pageLoading.classList.remove("is-hidden");
+                  pageLoading.setAttribute("aria-hidden", "false");
+                }};
+
                 const cards = document.querySelectorAll("[data-project-href]");
                 for (const card of cards) {{
                   const href = card.getAttribute("data-project-href");
                   if (!href) {{
                     continue;
                   }}
+                  const primaryLink = card.querySelector(".project-card__link");
+                  if (primaryLink) {{
+                    primaryLink.addEventListener("click", () => {{
+                      showPageLoading("Opening project…");
+                    }});
+                  }}
                   card.addEventListener("click", (event) => {{
                     if (event.target instanceof Element && event.target.closest("button, a, form")) {{
                       return;
                     }}
+                    showPageLoading("Opening project…");
                     window.location.href = href;
                   }});
                   card.addEventListener("keydown", (event) => {{
@@ -124,6 +148,7 @@ class WebRoutes:
                       return;
                     }}
                     event.preventDefault();
+                    showPageLoading("Opening project…");
                     window.location.href = href;
                   }});
                 }}
@@ -196,7 +221,7 @@ class WebRoutes:
                   <div class="graph-hovercard" id="graph-hovercard" hidden></div>
                   <div class="graph-loading" id="graph-loading" aria-live="polite">
                     <div class="graph-loading__spinner" aria-hidden="true"></div>
-                    <div class="graph-loading__text">Loading graph…</div>
+                    <div class="graph-loading__text">Scanning project…</div>
                   </div>
                   <div id="graph-root" data-graph-url="/projects/{project.id}/graph"></div>
                 </div>

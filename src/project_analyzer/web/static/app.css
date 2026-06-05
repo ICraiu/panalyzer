@@ -307,29 +307,13 @@ button:hover,
     linear-gradient(160deg, rgba(119, 224, 193, 0.1), transparent 52%),
     linear-gradient(180deg, rgba(14, 24, 35, 0.96), rgba(8, 15, 23, 0.92));
   box-shadow: var(--shadow-soft);
-  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
   cursor: pointer;
 }
 
-.project-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.08) 48%, transparent 60%);
-  transform: translateX(-120%);
-  transition: transform 420ms ease;
-}
-
 .project-card:hover {
-  transform: translateY(-4px) scale(1.01);
   border-color: rgba(183, 255, 233, 0.2);
-  box-shadow: 0 24px 54px rgba(0, 0, 0, 0.3);
-}
-
-.project-card:hover::before {
-  transform: translateX(120%);
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.26);
 }
 
 .project-card__link {
@@ -547,13 +531,33 @@ button:hover,
   transition: opacity 180ms ease, visibility 180ms ease;
 }
 
+.page-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-content: center;
+  gap: 16px;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(119, 224, 193, 0.1), transparent 18%),
+    rgba(4, 10, 15, 0.92);
+  transition: opacity 140ms ease, visibility 140ms ease;
+}
+
+.page-loading.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .graph-loading.is-hidden {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
 
-.graph-loading__spinner {
+.graph-loading__spinner,
+.page-loading__spinner {
   width: 44px;
   height: 44px;
   border-radius: 999px;
@@ -565,7 +569,8 @@ button:hover,
   box-shadow: 0 0 28px rgba(119, 224, 193, 0.14);
 }
 
-.graph-loading__text {
+.graph-loading__text,
+.page-loading__text {
   color: var(--muted-strong);
   letter-spacing: 0.12em;
   text-transform: uppercase;

@@ -16,7 +16,7 @@ if (root) {
 }
 
 async function loadGraph(url) {
-  showLoading("Loading graph…");
+  showLoading("Scanning project…");
   try {
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     const payload = await response.json();
@@ -32,6 +32,7 @@ async function loadGraph(url) {
       return;
     }
 
+    showLoading("Rendering graph…");
     const graphStates = buildGraphStates(payload);
     let currentMode = viewMode && viewMode.value === "method" ? "method" : "file";
 
@@ -215,7 +216,7 @@ async function loadGraph(url) {
       viewMode.addEventListener("change", () => {
         currentMode = viewMode.value === "file" ? "file" : "method";
         hideHovercard();
-        showLoading(`Switching to ${currentMode === "file" ? "file" : "method"} view…`);
+        showLoading(`Rendering ${currentMode === "file" ? "file" : "method"} view…`);
         applyGraphState(cy, graphStates[currentMode], true);
       });
     }

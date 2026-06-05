@@ -244,6 +244,8 @@ def test_homepage_renders_empty_and_populated_states() -> None:
     assert 'class="project-card__link" href="/projects/abc123"' in html
     assert 'data-project-href="/projects/abc123"' in html
     assert "enableProjectCardNavigation" in html
+    assert 'id="page-loading"' in html
+    assert "Opening project…" in html
 
 
 def test_add_project_returns_redirect_or_error_page() -> None:
@@ -327,11 +329,12 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     app_css = payload.decode("utf-8")
     assert ".project-card__link" in app_css
     assert "cursor: pointer;" in app_css
-    assert ".project-card::before" in app_css
-    assert "pointer-events: none;" in app_css
+    assert ".project-card::before" not in app_css
     assert ".project-card__actions" in app_css
     assert ".project-card__actions .button--danger" in app_css
     assert "background: transparent;" in app_css
+    assert ".page-loading" in app_css
+    assert ".page-loading__spinner" in app_css
     assert ".graph-proposal-status" in app_css
     assert ".graph-proposal-status--error" in app_css
     assert ".graph-proposal-status__warnings" in app_css
@@ -368,6 +371,9 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert "height: 52" in graph_js
     assert "renderProposalStatus(payload.graph?.active_proposal, payload.graph?.warnings || []);" in graph_js
     assert "showGraphError(payload?.error?.message || \"Failed to load graph data.\");" in graph_js
+    assert 'showLoading("Scanning project…");' in graph_js
+    assert 'showLoading("Rendering graph…");' in graph_js
+    assert 'Rendering ${currentMode === "file" ? "file" : "method"} view…' in graph_js
     assert 'selector: \'node[iteration_state = "add"]\'' in graph_js
     assert 'selector: \'edge[iteration_state = "remove"]\'' in graph_js
     assert 'iteration_state: node.iteration_state || "present"' in graph_js
