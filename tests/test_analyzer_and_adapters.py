@@ -51,6 +51,25 @@ def test_python_analyzer_can_include_external_references(sample_project: Path) -
     assert "value.strip" in external_targets
 
 
+def test_python_analyzer_resolves_service_calls_via_pyright(service_wiring_project: Path) -> None:
+    project = PythonAnalyzer().analyze(service_wiring_project, AnalyzerConfig())
+
+    references = {(reference.source_method, reference.target_method) for reference in project.references}
+
+    assert (
+        "demo.routes.WebRoutes.project_graph",
+        "demo.project_service.ProjectService.get_project_context",
+    ) in references
+    assert (
+        "demo.routes.WebRoutes.project_graph",
+        "demo.proposal_service.ProposalService.analyze_with_latest",
+    ) in references
+    assert (
+        "demo.routes.WebRoutes.add_proposal",
+        "demo.proposal_service.ProposalService.save",
+    ) in references
+
+
 def test_architecture_graph_and_diagram_adapters_share_expected_structure(sample_project: Path) -> None:
     project = PythonAnalyzer().analyze(sample_project, AnalyzerConfig())
 

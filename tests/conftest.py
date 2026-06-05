@@ -84,6 +84,68 @@ def local_python_project(tmp_path: Path) -> Path:
     return project_root
 
 
+@pytest.fixture
+def service_wiring_project(tmp_path: Path) -> Path:
+    project_root = tmp_path / "service-wiring"
+    package_dir = project_root / "src" / "demo"
+    package_dir.mkdir(parents=True)
+    (project_root / "pyproject.toml").write_text(
+        "[project]\nname = 'service-wiring'\nversion = '0.1.0'\n",
+        encoding="utf-8",
+    )
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "project_service.py").write_text(
+        """class ProjectService:
+    def get_project_context(self):
+        return "ok"
+""",
+        encoding="utf-8",
+    )
+    (package_dir / "proposal_service.py").write_text(
+        """class ProposalService:
+    def analyze_with_latest(self):
+        return "graph"
+
+    def save(self):
+        return "saved"
+""",
+        encoding="utf-8",
+    )
+    (package_dir / "context.py").write_text(
+        """from demo.project_service import ProjectService
+from demo.proposal_service import ProposalService
+
+
+class Context:
+    project_service: ProjectService
+    proposal_service: ProposalService
+
+    def __init__(self, project_service: ProjectService, proposal_service: ProposalService):
+        self.project_service = project_service
+        self.proposal_service = proposal_service
+""",
+        encoding="utf-8",
+    )
+    (package_dir / "routes.py").write_text(
+        """from demo.context import Context
+
+
+class WebRoutes:
+    def __init__(self, context: Context):
+        self.context = context
+
+    def project_graph(self):
+        self.context.project_service.get_project_context()
+        return self.context.proposal_service.analyze_with_latest()
+
+    def add_proposal(self):
+        return self.context.proposal_service.save()
+""",
+        encoding="utf-8",
+    )
+    return project_root
+
+
 def make_fake_request(path: str, body: bytes = b"") -> SimpleNamespace:
     return SimpleNamespace(
         path=path,

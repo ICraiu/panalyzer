@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import ast
+import json
+import os
 from pathlib import Path
-
-import libcst as cst
-from libcst import metadata
+import subprocess
+from urllib.parse import unquote, urlparse
 
 from .config import AnalyzerConfig
 from .models import Method, MethodReference, Package, Project, SourceFile
@@ -18,37 +20,33 @@ class _DiscoveredSymbol:
     signature: str
     file: str
     line: int
+    start_line: int
+    start_col: int
+    end_line: int
+    end_col: int
+
+    def contains(self, line: int, col: int) -> bool:
+        if line < self.start_line or line > self.end_line:
+            return False
+        if line == self.start_line and col < self.start_col:
+            return False
+        if line == self.end_line and col > self.end_col:
+            return False
+        return True
+
+    @property
+    def span_size(self) -> tuple[int, int]:
+        return (self.end_line - self.start_line, self.end_col - self.start_col)
 
 
 @dataclass
 class _DiscoveredCall:
-    source: str
-    target: str
+    source_method: str | None
     raw_target: str
     file: str
     line: int
-    confidence: str
-
-
-@dataclass
-class _ResolvedValue:
-    path: str
-    kind: str
-    confidence: str
-
-
-@dataclass
-class _AssignmentRecord:
-    target_attr: str
-    source_name: str
-
-
-@dataclass
-class _ClassInfo:
-    qualname: str
-    attr_types: dict[str, str] = field(default_factory=dict)
-    methods: set[str] = field(default_factory=set)
-    assignments: list[_AssignmentRecord] = field(default_factory=list)
+    position_line: int
+    position_col: int
 
 
 @dataclass
@@ -56,424 +54,396 @@ class _ModuleInfo:
     import_path: str
     file_path: Path
     source_root: Path
-    imports: dict[str, str]
     symbols: list[_DiscoveredSymbol]
     calls: list[_DiscoveredCall]
-    classes: dict[str, _ClassInfo]
 
 
-class _QualifiedResolver:
-    def __init__(self, modules: dict[str, _ModuleInfo]):
-        self.modules = modules
-        self.class_infos: dict[str, _ClassInfo] = {}
-        self.symbols: set[str] = set()
-        self.method_symbols: set[str] = set()
-
-        for module in modules.values():
-            self.symbols.add(module.import_path)
-            for symbol in module.symbols:
-                self.symbols.add(symbol.qualname)
-                if symbol.signature.startswith("class "):
-                    self.class_infos[symbol.qualname] = module.classes.get(symbol.qualname, _ClassInfo(symbol.qualname))
-                else:
-                    self.method_symbols.add(symbol.qualname)
-
-    def canonicalize(self, path: str) -> str:
-        current = path
-        seen: set[str] = set()
-        while current not in seen:
-            seen.add(current)
-            if current in self.symbols:
-                return current
-            module_path, sep, attr = current.rpartition(".")
-            if not sep:
-                return current
-            module = self.modules.get(module_path)
-            if module is None:
-                return current
-            replacement = module.imports.get(attr)
-            if replacement is None:
-                return current
-            current = replacement
-        return current
-
-    def resolve_annotation(self, module: _ModuleInfo, annotation: cst.Annotation | None) -> str | None:
-        if annotation is None:
-            return None
-        return self._resolve_name_like(module, annotation.annotation)
-
-    def _resolve_name_like(self, module: _ModuleInfo, node: cst.CSTNode) -> str | None:
-        raw = _expression_name(node)
-        if raw is None:
-            return None
-        parts = raw.split(".")
-        first = parts[0]
-        if first in module.imports:
-            imported = module.imports[first]
-            candidate = ".".join([imported, *parts[1:]]) if len(parts) > 1 else imported
-            return self.canonicalize(candidate)
-        if len(parts) == 1:
-            return self.canonicalize(f"{module.import_path}.{raw}")
-        return self.canonicalize(raw)
-
-
-class _ModuleModelCollector(cst.CSTVisitor):
-    METADATA_DEPENDENCIES = (metadata.PositionProvider,)
-
-    def __init__(self, module: cst.Module, file_path: Path, import_path: str):
-        self.module = module
+class _ModuleCollector(ast.NodeVisitor):
+    def __init__(self, source: str, file_path: Path, import_path: str):
+        self.source = source
         self.file_path = file_path
         self.import_path = import_path
-        self.imports: dict[str, str] = {}
         self.symbols: list[_DiscoveredSymbol] = []
-        self.classes: dict[str, _ClassInfo] = {}
-        self.class_stack: list[str] = []
-        self.function_stack: list[str] = []
-        self._current_init_params: dict[str, str | None] | None = None
-
-    @property
-    def current_scope(self) -> str:
-        parts = [self.import_path, *self.class_stack, *self.function_stack]
-        return ".".join(parts)
-
-    def visit_Import(self, node: cst.Import) -> None:
-        for alias in node.names:
-            if not isinstance(alias, cst.ImportAlias):
-                continue
-            name = _expression_name(alias.name)
-            if name is None:
-                continue
-            local = alias.asname.name.value if alias.asname is not None else name.split(".")[0]
-            self.imports[local] = name
-
-    def visit_ImportFrom(self, node: cst.ImportFrom) -> None:
-        module_name = _resolve_import_from_module(self.import_path, node.module, node.relative)
-        if module_name is None or isinstance(node.names, cst.ImportStar):
-            return
-        for alias in node.names:
-            if not isinstance(alias, cst.ImportAlias):
-                continue
-            imported_name = _expression_name(alias.name)
-            if imported_name is None:
-                continue
-            local = alias.asname.name.value if alias.asname is not None else imported_name
-            self.imports[local] = f"{module_name}.{imported_name}"
-
-    def visit_ClassDef(self, node: cst.ClassDef) -> None:
-        qualname = f"{self.current_scope}.{node.name.value}"
-        self.symbols.append(
-            _DiscoveredSymbol(
-                name=node.name.value,
-                qualname=qualname,
-                signature=_render_class_signature(self.module, node),
-                file=str(self.file_path),
-                line=self.get_metadata(metadata.PositionProvider, node).start.line,
-            )
-        )
-        self.classes[qualname] = _ClassInfo(qualname=qualname)
-        self.class_stack.append(node.name.value)
-
-    def leave_ClassDef(self, original_node: cst.ClassDef) -> None:
-        self.class_stack.pop()
-
-    def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
-        if not self.class_stack:
-            return
-        class_info = self.classes.get(".".join([self.import_path, *self.class_stack]))
-        if class_info is None:
-            return
-        if isinstance(node.target, cst.Name):
-            annotation = _annotation_name(node.annotation.annotation)
-            if annotation is not None:
-                class_info.attr_types[node.target.value] = annotation
-
-    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-        qualname = f"{self.current_scope}.{node.name.value}"
-        self.symbols.append(
-            _DiscoveredSymbol(
-                name=node.name.value,
-                qualname=qualname,
-                signature=_render_function_signature(self.module, node),
-                file=str(self.file_path),
-                line=self.get_metadata(metadata.PositionProvider, node).start.line,
-            )
-        )
-        if self.class_stack:
-            class_qualname = ".".join([self.import_path, *self.class_stack])
-            class_info = self.classes.get(class_qualname)
-            if class_info is not None:
-                class_info.methods.add(node.name.value)
-
-        self.function_stack.append(node.name.value)
-        if node.name.value == "__init__" and self.class_stack:
-            self._current_init_params = {
-                param.name.value: _annotation_name(param.annotation.annotation) if param.annotation else None
-                for param in node.params.params
-            }
-        else:
-            self._current_init_params = None
-
-    def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
-        self.function_stack.pop()
-        self._current_init_params = None
-
-    def visit_Assign(self, node: cst.Assign) -> None:
-        if not self.class_stack or self._current_init_params is None:
-            return
-        if len(node.targets) != 1:
-            return
-        target = node.targets[0].target
-        target_attr = _self_attribute_name(target)
-        if target_attr is None:
-            return
-        source_name = _expression_name(node.value)
-        if source_name is None:
-            return
-        class_qualname = ".".join([self.import_path, *self.class_stack])
-        class_info = self.classes.get(class_qualname)
-        if class_info is None:
-            return
-        class_info.assignments.append(
-            _AssignmentRecord(target_attr=target_attr, source_name=source_name)
-        )
-
-
-class _CallCollector(cst.CSTVisitor):
-    METADATA_DEPENDENCIES = (metadata.PositionProvider,)
-
-    def __init__(self, module_info: _ModuleInfo, resolver: _QualifiedResolver):
-        self.module_info = module_info
-        self.resolver = resolver
         self.calls: list[_DiscoveredCall] = []
-        self.class_stack: list[str] = []
+        self.scope_stack: list[str] = []
         self.function_stack: list[str] = []
-        self.local_bindings: list[dict[str, _ResolvedValue]] = []
 
-    @property
-    def current_scope(self) -> str:
-        parts = [self.module_info.import_path, *self.class_stack, *self.function_stack]
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        qualname = self._qualname(node.name)
+        self.symbols.append(
+            _DiscoveredSymbol(
+                name=node.name,
+                qualname=qualname,
+                signature=_render_class_signature(node),
+                file=str(self.file_path),
+                line=node.lineno,
+                start_line=node.lineno,
+                start_col=node.col_offset,
+                end_line=node.end_lineno or node.lineno,
+                end_col=node.end_col_offset or node.col_offset,
+            )
+        )
+        self.scope_stack.append(node.name)
+        self.generic_visit(node)
+        self.scope_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function_like(node, asynchronous=False)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function_like(node, asynchronous=True)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        raw_target = _expression_name(node.func)
+        position = _call_target_position(node.func)
+        if raw_target is not None and position is not None:
+            self.calls.append(
+                _DiscoveredCall(
+                    source_method=self.function_stack[-1] if self.function_stack else None,
+                    raw_target=raw_target,
+                    file=str(self.file_path),
+                    line=node.lineno,
+                    position_line=position[0],
+                    position_col=position[1],
+                )
+            )
+        self.generic_visit(node)
+
+    def _visit_function_like(self, node: ast.FunctionDef | ast.AsyncFunctionDef, *, asynchronous: bool) -> None:
+        qualname = self._qualname(node.name)
+        self.symbols.append(
+            _DiscoveredSymbol(
+                name=node.name,
+                qualname=qualname,
+                signature=_render_function_signature(node, asynchronous=asynchronous),
+                file=str(self.file_path),
+                line=node.lineno,
+                start_line=node.lineno,
+                start_col=node.col_offset,
+                end_line=node.end_lineno or node.lineno,
+                end_col=node.end_col_offset or node.col_offset,
+            )
+        )
+        self.scope_stack.append(node.name)
+        self.function_stack.append(qualname)
+        self.generic_visit(node)
+        self.function_stack.pop()
+        self.scope_stack.pop()
+
+    def _qualname(self, name: str) -> str:
+        parts = [self.import_path, *self.scope_stack, name]
         return ".".join(parts)
 
-    def visit_ClassDef(self, node: cst.ClassDef) -> None:
-        self.class_stack.append(node.name.value)
 
-    def leave_ClassDef(self, original_node: cst.ClassDef) -> None:
-        self.class_stack.pop()
+class _PyrightLanguageServer:
+    def __init__(self, root: Path, source_roots: list[Path]):
+        self.root = root
+        self.source_roots = source_roots
+        self.process: subprocess.Popen[bytes] | None = None
+        self._next_id = 0
 
-    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-        self.function_stack.append(node.name.value)
-        bindings: dict[str, _ResolvedValue] = {}
-        if self.class_stack and node.params.params:
-            first = node.params.params[0].name.value
-            bindings[first] = _ResolvedValue(
-                path=".".join([self.module_info.import_path, *self.class_stack]),
-                kind="instance",
-                confidence="self_binding",
+    def __enter__(self) -> _PyrightLanguageServer:
+        try:
+            self.process = subprocess.Popen(
+                ["pyright-langserver", "--stdio"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
             )
-        for param in node.params.params:
-            if param.annotation is None:
-                continue
-            annotation_path = self.resolver.resolve_annotation(self.module_info, param.annotation)
-            if annotation_path is None:
-                continue
-            bindings[param.name.value] = _ResolvedValue(
-                path=annotation_path,
-                kind="instance",
-                confidence="annotated_param",
-            )
-        self.local_bindings.append(bindings)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "pyright-langserver is required for analysis but is not installed"
+            ) from exc
 
-    def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
-        self.function_stack.pop()
-        self.local_bindings.pop()
+        self._request(
+            "initialize",
+            {
+                "processId": os.getpid(),
+                "rootUri": self.root.as_uri(),
+                "capabilities": {},
+                "workspaceFolders": [{"uri": self.root.as_uri(), "name": self.root.name}],
+            },
+        )
+        self._notify("initialized", {})
+        self._notify(
+            "workspace/didChangeConfiguration",
+            {
+                "settings": {
+                    "python": {
+                        "analysis": {
+                            "autoSearchPaths": False,
+                            "useLibraryCodeForTypes": True,
+                            "diagnosticMode": "workspace",
+                            "extraPaths": [str(path) for path in self.source_roots],
+                        }
+                    }
+                }
+            },
+        )
+        return self
 
-    def visit_Assign(self, node: cst.Assign) -> None:
-        if not self.local_bindings or len(node.targets) != 1:
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self.process is None:
             return
-        target = node.targets[0].target
-        if not isinstance(target, cst.Name):
-            return
-        resolved_value = self._resolve_expression_value(node.value)
-        if resolved_value is not None:
-            self.local_bindings[-1][target.value] = resolved_value
+        try:
+            self._request("shutdown", None)
+            self._notify("exit", {})
+        finally:
+            if self.process.poll() is None:
+                self.process.kill()
+            self.process.wait(timeout=5)
 
-    def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
-        if not self.local_bindings or not isinstance(node.target, cst.Name):
-            return
-        annotation_path = self.resolver.resolve_annotation(self.module_info, node.annotation)
-        if annotation_path is None:
-            return
-        self.local_bindings[-1][node.target.value] = _ResolvedValue(
-            path=annotation_path,
-            kind="instance",
-            confidence="annotated_local",
+    def open_document(self, file_path: Path, source: str) -> None:
+        self._notify(
+            "textDocument/didOpen",
+            {
+                "textDocument": {
+                    "uri": file_path.as_uri(),
+                    "languageId": "python",
+                    "version": 1,
+                    "text": source,
+                }
+            },
         )
 
-    def visit_Call(self, node: cst.Call) -> None:
-        if not self.function_stack:
-            source = self.module_info.import_path
-        else:
-            source = self.current_scope
-        raw_target = _expression_name(node.func)
-        if raw_target is None:
-            return
-        resolved = self._resolve_callable(node.func)
-        if resolved is None:
-            target = self._fallback_target(raw_target)
-            confidence = "unresolved"
-        else:
-            target = resolved.path
-            confidence = resolved.confidence
-
-        self.calls.append(
-            _DiscoveredCall(
-                source=source,
-                target=target,
-                raw_target=raw_target,
-                file=str(self.module_info.file_path),
-                line=self.get_metadata(metadata.PositionProvider, node).start.line,
-                confidence=confidence,
+    def definition(self, file_path: Path, line: int, col: int) -> list[tuple[Path, int, int]]:
+        result = self._request(
+            "textDocument/definition",
+            {
+                "textDocument": {"uri": file_path.as_uri()},
+                "position": {"line": line, "character": col},
+            },
+        )
+        locations = result if isinstance(result, list) else ([result] if result else [])
+        resolved: list[tuple[Path, int, int]] = []
+        for location in locations:
+            if not isinstance(location, dict):
+                continue
+            uri = location.get("uri")
+            range_data = location.get("range", {})
+            start = range_data.get("start", {})
+            if not isinstance(uri, str):
+                continue
+            resolved.append(
+                (
+                    _uri_to_path(uri),
+                    int(start.get("line", 0)),
+                    int(start.get("character", 0)),
+                )
             )
+        return resolved
+
+    def _notify(self, method: str, params: object) -> None:
+        self._send({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def _request(self, method: str, params: object) -> object:
+        request_id = self._next_id
+        self._next_id += 1
+        self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+
+        while True:
+            message = self._read()
+            if message.get("id") == request_id:
+                if "error" in message:
+                    raise RuntimeError(f"pyright request failed: {message['error']}")
+                return message.get("result")
+
+    def _send(self, payload: dict[str, object]) -> None:
+        if self.process is None or self.process.stdin is None:
+            raise RuntimeError("pyright language server is not running")
+        data = json.dumps(payload).encode("utf-8")
+        header = f"Content-Length: {len(data)}\r\n\r\n".encode("ascii")
+        self.process.stdin.write(header)
+        self.process.stdin.write(data)
+        self.process.stdin.flush()
+
+    def _read(self) -> dict[str, object]:
+        if self.process is None or self.process.stdout is None:
+            raise RuntimeError("pyright language server is not running")
+
+        headers: dict[str, str] = {}
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                raise RuntimeError("pyright language server terminated unexpectedly")
+            if line == b"\r\n":
+                break
+            decoded = line.decode("ascii").strip()
+            name, _, value = decoded.partition(":")
+            headers[name.lower()] = value.strip()
+
+        content_length = int(headers["content-length"])
+        body = self.process.stdout.read(content_length)
+        return json.loads(body.decode("utf-8"))
+
+
+class ProjectAnalyzer(ABC):
+    """Abstract adapter for analyzing a project tree."""
+
+    @abstractmethod
+    def analyze(self, root: Path, config: AnalyzerConfig) -> Project:
+        """Analyze *root* and return the project domain model."""
+
+
+class PythonAnalyzer(ProjectAnalyzer):
+    """AST collector with Pyright-backed definition resolution."""
+
+    def analyze(self, root: Path, config: AnalyzerConfig) -> Project:
+        root = root.resolve()
+        source_roots = config.resolved_source_roots(root)
+        modules: dict[str, _ModuleInfo] = {}
+        file_sources: dict[str, str] = {}
+
+        for file_path in _discover_python_files(root):
+            if config.should_ignore_file(root, file_path):
+                continue
+            source_root = _source_root_for_file(file_path, source_roots)
+            if source_root is None:
+                continue
+            source = _read_source(file_path)
+            if source is None:
+                continue
+            module = _build_module_info(file_path, source_root, source)
+            if module is None:
+                continue
+            modules[module.import_path] = module
+            file_sources[str(module.file_path)] = source
+
+        symbol_index = _SymbolIndex.from_modules(modules)
+        references = self._resolve_references(root, source_roots, modules, file_sources, symbol_index, config)
+
+        source_files: list[SourceFile] = []
+        import_path_to_source_root: dict[str, Path] = {}
+        for import_path, module in sorted(modules.items()):
+            import_path_to_source_root[import_path] = module.source_root
+            source_files.append(
+                SourceFile(
+                    path=str(module.file_path),
+                    import_path=import_path,
+                    methods=[
+                        Method(
+                            name=symbol.name,
+                            qualname=symbol.qualname,
+                            signature=symbol.signature,
+                            line=symbol.line,
+                        )
+                        for symbol in module.symbols
+                    ],
+                )
+            )
+
+        packages_by_name: dict[str, Package] = {}
+        for source_file in sorted(source_files, key=lambda item: item.import_path):
+            source_root = import_path_to_source_root[source_file.import_path]
+            package_name = _package_name_for_file(source_root, source_file.path, source_file.import_path)
+            package = packages_by_name.get(package_name)
+            if package is None:
+                package = Package(
+                    name=package_name,
+                    path=_package_path(source_root, source_file.path, package_name),
+                    files=[],
+                )
+                packages_by_name[package_name] = package
+            package.files.append(source_file)
+
+        return Project(
+            root=str(root),
+            packages=sorted(packages_by_name.values(), key=lambda item: item.name),
+            references=references,
         )
 
-    def _resolve_callable(self, node: cst.BaseExpression) -> _ResolvedValue | None:
-        if isinstance(node, cst.Name):
-            return self._resolve_name(node.value, allow_local_guess=True)
-        if isinstance(node, cst.Attribute):
-            base_value = self._resolve_expression_value(node.value)
-            if base_value is None:
-                return None
-            return self._resolve_attribute(base_value, node.attr.value)
-        if isinstance(node, cst.Call):
-            return self._resolve_callable(node.func)
-        return None
+    def _resolve_references(
+        self,
+        root: Path,
+        source_roots: list[Path],
+        modules: dict[str, _ModuleInfo],
+        file_sources: dict[str, str],
+        symbol_index: _SymbolIndex,
+        config: AnalyzerConfig,
+    ) -> list[MethodReference]:
+        references: list[MethodReference] = []
+        with _PyrightLanguageServer(root, source_roots) as pyright:
+            for module in modules.values():
+                pyright.open_document(module.file_path, file_sources[str(module.file_path)])
 
-    def _resolve_expression_value(self, node: cst.BaseExpression) -> _ResolvedValue | None:
-        if isinstance(node, cst.Name):
-            return self._resolve_name(node.value, allow_local_guess=False)
-        if isinstance(node, cst.Attribute):
-            base = self._resolve_expression_value(node.value)
-            if base is None:
-                return None
-            return self._resolve_attribute(base, node.attr.value)
-        if isinstance(node, cst.Call):
-            callee = self._resolve_callable(node.func)
-            if callee is None:
-                return None
-            canonical = self.resolver.canonicalize(callee.path)
-            if canonical in self.resolver.class_infos:
-                return _ResolvedValue(path=canonical, kind="instance", confidence=callee.confidence)
+            for module in sorted(modules.values(), key=lambda item: item.import_path):
+                for call in module.calls:
+                    target = None
+                    for path, line, col in pyright.definition(
+                        Path(call.file),
+                        call.position_line,
+                        call.position_col,
+                    ):
+                        symbol = symbol_index.resolve(path, line, col)
+                        if symbol is not None:
+                            target = symbol.qualname
+                            break
+
+                    if target is None:
+                        if not config.include_external_references:
+                            continue
+                        target = _fallback_target(module.import_path, call.raw_target)
+
+                    references.append(
+                        MethodReference(
+                            source_method=call.source_method,
+                            target_method=target,
+                            file_path=call.file,
+                            line=call.line,
+                        )
+                    )
+        return references
+
+
+@dataclass
+class _SymbolIndex:
+    by_file: dict[str, list[_DiscoveredSymbol]]
+
+    @classmethod
+    def from_modules(cls, modules: dict[str, _ModuleInfo]) -> _SymbolIndex:
+        by_file: dict[str, list[_DiscoveredSymbol]] = {}
+        for module in modules.values():
+            by_file[str(module.file_path)] = sorted(
+                module.symbols,
+                key=lambda symbol: (symbol.span_size[0], symbol.span_size[1]),
+            )
+        return cls(by_file=by_file)
+
+    def resolve(self, file_path: Path, line: int, col: int) -> _DiscoveredSymbol | None:
+        symbols = self.by_file.get(str(file_path.resolve()))
+        if not symbols:
             return None
-        return None
-
-    def _resolve_name(self, name: str, *, allow_local_guess: bool) -> _ResolvedValue | None:
-        for scope in reversed(self.local_bindings):
-            if name in scope:
-                return scope[name]
-
-        imported = self.module_info.imports.get(name)
-        if imported is not None:
-            canonical = self.resolver.canonicalize(imported)
-            kind = "module"
-            if canonical in self.resolver.class_infos:
-                kind = "class"
-            elif canonical in self.resolver.method_symbols:
-                kind = "callable"
-            return _ResolvedValue(path=canonical, kind=kind, confidence="resolved_import")
-
-        if self.class_stack:
-            class_qualname = ".".join([self.module_info.import_path, *self.class_stack])
-            class_info = self.resolver.class_infos.get(class_qualname)
-            if class_info and name in class_info.methods:
-                return _ResolvedValue(
-                    path=f"{class_qualname}.{name}",
-                    kind="callable",
-                    confidence="resolved_self_method",
-                )
-
-        if allow_local_guess and "." not in name:
-            return _ResolvedValue(
-                path=f"{self.module_info.import_path}.{name}",
-                kind="callable",
-                confidence="local_import_path_guess",
-            )
-        return None
-
-    def _resolve_attribute(self, base: _ResolvedValue, attr: str) -> _ResolvedValue | None:
-        canonical_base = self.resolver.canonicalize(base.path)
-        class_info = self.resolver.class_infos.get(canonical_base)
-        if class_info is not None:
-            if attr in class_info.attr_types:
-                attr_type = self.resolver.canonicalize(class_info.attr_types[attr])
-                return _ResolvedValue(path=attr_type, kind="instance", confidence="resolved_attr_type")
-            if attr in class_info.methods:
-                return _ResolvedValue(
-                    path=f"{canonical_base}.{attr}",
-                    kind="callable",
-                    confidence="resolved_attr_method",
-                )
-
-        candidate = self.resolver.canonicalize(f"{canonical_base}.{attr}")
-        if candidate in self.resolver.class_infos:
-            return _ResolvedValue(path=candidate, kind="class", confidence="resolved_import")
-        if candidate in self.resolver.method_symbols:
-            return _ResolvedValue(path=candidate, kind="callable", confidence="resolved_import")
-        return _ResolvedValue(path=candidate, kind="unknown", confidence="unresolved")
-
-    def _fallback_target(self, raw_target: str) -> str:
-        if raw_target.startswith("self.") and self.class_stack:
-            parts = raw_target.split(".")
-            if len(parts) > 1:
-                class_scope = ".".join([self.module_info.import_path, *self.class_stack])
-                return f"{class_scope}.{parts[-1]}"
-        parts = raw_target.split(".")
-        if len(parts) == 1:
-            return f"{self.module_info.import_path}.{raw_target}"
-        return raw_target
+        candidates = [symbol for symbol in symbols if symbol.contains(line + 1, col)]
+        if not candidates:
+            candidates = [symbol for symbol in symbols if symbol.line == line + 1]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda symbol: symbol.span_size)
 
 
-def _build_module_info(file_path: Path, source_root: Path) -> _ModuleInfo | None:
-    import_path = _path_to_import_path(source_root, file_path)
+def _build_module_info(file_path: Path, source_root: Path, source: str) -> _ModuleInfo | None:
     try:
-        source = file_path.read_text(encoding="utf-8")
-        module = cst.parse_module(source)
-    except (OSError, cst.ParserSyntaxError):
+        tree = ast.parse(source, filename=str(file_path))
+    except SyntaxError:
         return None
 
-    wrapper = metadata.MetadataWrapper(module)
-    collector = _ModuleModelCollector(module, file_path.resolve(), import_path)
-    wrapper.visit(collector)
+    import_path = _path_to_import_path(source_root, file_path)
+    collector = _ModuleCollector(source, file_path.resolve(), import_path)
+    collector.visit(tree)
     return _ModuleInfo(
         import_path=import_path,
         file_path=file_path.resolve(),
         source_root=source_root,
-        imports=collector.imports,
         symbols=collector.symbols,
-        calls=[],
-        classes=collector.classes,
+        calls=collector.calls,
     )
 
 
-def _hydrate_class_assignments(modules: dict[str, _ModuleInfo], resolver: _QualifiedResolver) -> None:
-    for module in modules.values():
-        for class_info in module.classes.values():
-            for assignment in class_info.assignments:
-                source_type = class_info.attr_types.get(assignment.source_name)
-                if source_type is not None:
-                    class_info.attr_types[assignment.target_attr] = resolver.canonicalize(source_type)
-                    continue
-                imported = module.imports.get(assignment.source_name)
-                if imported is not None:
-                    class_info.attr_types[assignment.target_attr] = resolver.canonicalize(imported)
-
-
-def _collect_calls(modules: dict[str, _ModuleInfo], resolver: _QualifiedResolver) -> None:
-    for module in modules.values():
-        source = module.file_path.read_text(encoding="utf-8")
-        wrapper = metadata.MetadataWrapper(cst.parse_module(source))
-        collector = _CallCollector(module, resolver)
-        wrapper.visit(collector)
-        module.calls = collector.calls
+def _read_source(file_path: Path) -> str | None:
+    try:
+        return file_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
 
 def _path_to_import_path(source_root: Path, file_path: Path) -> str:
@@ -486,72 +456,44 @@ def _path_to_import_path(source_root: Path, file_path: Path) -> str:
     return ".".join(parts)
 
 
-def _render_class_signature(module: cst.Module, node: cst.ClassDef) -> str:
+def _render_class_signature(node: ast.ClassDef) -> str:
     if not node.bases:
-        return f"class {node.name.value}"
-    bases = ", ".join(module.code_for_node(base.value).strip() for base in node.bases)
-    return f"class {node.name.value}({bases})"
+        return f"class {node.name}"
+    bases = ", ".join(ast.unparse(base).strip() for base in node.bases)
+    return f"class {node.name}({bases})"
 
 
-def _render_function_signature(module: cst.Module, node: cst.FunctionDef) -> str:
-    prefix = "async def" if node.asynchronous is not None else "def"
-    args = module.code_for_node(node.params)
-    returns = ""
-    if node.returns is not None:
-        returns = f" -> {module.code_for_node(node.returns.annotation).strip()}"
-    return f"{prefix} {node.name.value}{args}{returns}"
+def _render_function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef, *, asynchronous: bool) -> str:
+    prefix = "async def" if asynchronous else "def"
+    args = ast.unparse(node.args).strip()
+    returns = f" -> {ast.unparse(node.returns).strip()}" if node.returns is not None else ""
+    return f"{prefix} {node.name}({args}){returns}"
 
 
-def _expression_name(node: cst.CSTNode | None) -> str | None:
+def _expression_name(node: ast.AST | None) -> str | None:
     if node is None:
         return None
-    if isinstance(node, cst.Name):
-        return node.value
-    if isinstance(node, cst.Attribute):
-        base = _expression_name(node.value)
-        if base:
-            return f"{base}.{node.attr.value}"
-        return node.attr.value
-    if isinstance(node, cst.Call):
-        return _expression_name(node.func)
-    if isinstance(node, cst.Annotation):
-        return _expression_name(node.annotation)
+    try:
+        return ast.unparse(node).strip()
+    except Exception:
+        return None
+
+
+def _call_target_position(node: ast.AST) -> tuple[int, int] | None:
+    if isinstance(node, ast.Attribute):
+        return ((node.end_lineno or node.lineno) - 1, (node.end_col_offset or node.col_offset) - 1)
+    if isinstance(node, ast.Name):
+        return (node.lineno - 1, node.col_offset)
+    if isinstance(node, ast.Call):
+        return _call_target_position(node.func)
     return None
 
 
-def _annotation_name(node: cst.CSTNode | None) -> str | None:
-    return _expression_name(node)
-
-
-def _self_attribute_name(node: cst.CSTNode) -> str | None:
-    if not isinstance(node, cst.Attribute):
-        return None
-    if not isinstance(node.value, cst.Name) or node.value.value != "self":
-        return None
-    return node.attr.value
-
-
-def _resolve_import_from_module(
-    import_path: str,
-    module: cst.BaseExpression | None,
-    relative: tuple[cst.Dot, ...] | None,
-) -> str | None:
-    module_name = _expression_name(module)
-    level = len(relative or ())
-    if level <= 0:
-        return module_name
-
-    package_parts = import_path.split(".")
-    if package_parts:
-        package_parts = package_parts[:-1]
-
-    if level > 1:
-        package_parts = package_parts[: max(len(package_parts) - (level - 1), 0)]
-
-    resolved_parts = [*package_parts]
-    if module_name:
-        resolved_parts.extend(module_name.split("."))
-    return ".".join(resolved_parts)
+def _fallback_target(import_path: str, raw_target: str) -> str:
+    parts = raw_target.split(".")
+    if len(parts) == 1:
+        return f"{import_path}.{raw_target}"
+    return raw_target
 
 
 def _discover_python_files(root: Path) -> list[Path]:
@@ -598,104 +540,8 @@ def _package_path(source_root: Path, file_path: str, package_name: str) -> str:
     return str(path.parent)
 
 
-class ProjectAnalyzer(ABC):
-    """Abstract adapter for analyzing a project tree."""
-
-    @abstractmethod
-    def analyze(self, root: Path, config: AnalyzerConfig) -> Project:
-        """Analyze *root* and return the project domain model."""
-
-
-class PythonAnalyzer(ProjectAnalyzer):
-    """LibCST-based analyzer for Python projects."""
-
-    def analyze(self, root: Path, config: AnalyzerConfig) -> Project:
-        root = root.resolve()
-        source_roots = config.resolved_source_roots(root)
-        modules: dict[str, _ModuleInfo] = {}
-
-        for file_path in _discover_python_files(root):
-            if config.should_ignore_file(root, file_path):
-                continue
-            source_root = _source_root_for_file(file_path, source_roots)
-            if source_root is None:
-                continue
-            module_info = _build_module_info(file_path, source_root)
-            if module_info is None:
-                continue
-            modules[module_info.import_path] = module_info
-
-        resolver = _QualifiedResolver(modules)
-        _hydrate_class_assignments(modules, resolver)
-        _collect_calls(modules, resolver)
-
-        method_to_file: dict[str, str] = {}
-        import_path_to_file: dict[str, str] = {}
-        import_path_to_source_root: dict[str, Path] = {}
-        file_symbols: dict[str, list[_DiscoveredSymbol]] = {}
-        file_calls: dict[str, list[_DiscoveredCall]] = {}
-
-        for import_path, module in modules.items():
-            import_path_to_file[import_path] = str(module.file_path)
-            import_path_to_source_root[import_path] = module.source_root
-            file_symbols[import_path] = module.symbols
-            file_calls[import_path] = module.calls
-            for symbol in module.symbols:
-                method_to_file[symbol.qualname] = str(module.file_path)
-
-        internal_symbols = set(method_to_file)
-        source_files: list[SourceFile] = []
-        all_references: list[MethodReference] = []
-
-        for import_path, symbols in file_symbols.items():
-            source_root = import_path_to_source_root[import_path]
-            file_path = import_path_to_file[import_path]
-            methods = [
-                Method(
-                    name=symbol.name,
-                    qualname=symbol.qualname,
-                    signature=symbol.signature,
-                    line=symbol.line,
-                )
-                for symbol in symbols
-            ]
-
-            for edge in file_calls.get(import_path, []):
-                if edge.target not in internal_symbols and not config.include_external_references:
-                    continue
-                all_references.append(
-                    MethodReference(
-                        source_method=edge.source if edge.source != import_path else None,
-                        target_method=edge.target,
-                        file_path=edge.file,
-                        line=edge.line,
-                    )
-                )
-
-            source_files.append(
-                SourceFile(
-                    path=file_path,
-                    import_path=import_path,
-                    methods=methods,
-                )
-            )
-
-        packages_by_name: dict[str, Package] = {}
-        for source_file in sorted(source_files, key=lambda item: item.import_path):
-            source_root = import_path_to_source_root[source_file.import_path]
-            package_name = _package_name_for_file(source_root, source_file.path, source_file.import_path)
-            package = packages_by_name.get(package_name)
-            if package is None:
-                package = Package(
-                    name=package_name,
-                    path=_package_path(source_root, source_file.path, package_name),
-                    files=[],
-                )
-                packages_by_name[package_name] = package
-            package.files.append(source_file)
-
-        return Project(
-            root=str(root),
-            packages=sorted(packages_by_name.values(), key=lambda item: item.name),
-            references=all_references,
-        )
+def _uri_to_path(uri: str) -> Path:
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return Path(uri)
+    return Path(unquote(parsed.path)).resolve()
