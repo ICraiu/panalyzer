@@ -374,6 +374,22 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert 'showLoading("Scanning project…");' in graph_js
     assert 'showLoading("Rendering graph…");' in graph_js
     assert 'Rendering ${currentMode === "file" ? "file" : "method"} view…' in graph_js
+    assert '"border-color": "#d7dde3"' in graph_js
+    assert '"border-color": "#dce3e8"' in graph_js
+    assert '"border-color": "#cdd5dc"' in graph_js
+    assert '"border-width": 4.5' in graph_js
+    assert 'node[node_type = "file"][iteration_state = "add"]' in graph_js
+    assert 'node[node_type = "method"][iteration_state = "change"]' in graph_js
+    assert 'node[node_type = "package"][iteration_state = "remove"]' in graph_js
+    assert 'node[node_type = "file"][iteration_state = "change"]' in graph_js
+    assert 'node[node_type = "file"][iteration_state = "remove"]' in graph_js
+    assert 'color: "#f7f2e8"' in graph_js
+    assert '"background-color": "#173324"' in graph_js
+    assert '"background-color": "#2a2416"' in graph_js
+    assert '"background-color": "#311819"' in graph_js
+    assert '"line-color": "#d4dbe0"' in graph_js
+    assert '"target-arrow-color": "#d4dbe0"' in graph_js
+    assert "width: 4" in graph_js
     assert 'selector: \'node[iteration_state = "add"]\'' in graph_js
     assert 'selector: \'edge[iteration_state = "remove"]\'' in graph_js
     assert 'iteration_state: node.iteration_state || "present"' in graph_js

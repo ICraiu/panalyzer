@@ -49,8 +49,8 @@ async function loadGraph(url) {
             "text-wrap": "wrap",
             "text-max-width": 140,
             "background-color": "#0d1720",
-            "border-color": "#405463",
-            "border-width": 1.5,
+            "border-color": "#d7dde3",
+            "border-width": 1.6,
             shape: "round-rectangle",
             width: "label",
             height: "label",
@@ -61,6 +61,7 @@ async function loadGraph(url) {
           selector: 'node[iteration_state = "add"]',
           style: {
             "border-color": "#7ee787",
+            "border-width": 4.5,
             "background-color": "#173324",
           },
         },
@@ -68,6 +69,7 @@ async function loadGraph(url) {
           selector: 'node[iteration_state = "change"]',
           style: {
             "border-color": "#f1c95b",
+            "border-width": 4.5,
             "background-color": "#2a2416",
           },
         },
@@ -75,6 +77,7 @@ async function loadGraph(url) {
           selector: 'node[iteration_state = "remove"]',
           style: {
             "border-color": "#ff6b6b",
+            "border-width": 4.5,
             "background-color": "#311819",
           },
         },
@@ -83,9 +86,9 @@ async function loadGraph(url) {
           style: {
             "background-color": "#13212d",
             "background-opacity": 0.44,
-            "border-color": "#f36d61",
+            "border-color": "#dce3e8",
             "border-style": "solid",
-            "border-width": 2,
+            "border-width": 2.2,
             "text-valign": "top",
             "text-halign": "left",
             "text-margin-x": 14,
@@ -105,9 +108,9 @@ async function loadGraph(url) {
             color: "#11202a",
             "background-color": "#f5efdf",
             "background-opacity": 0.92,
-            "border-color": "#d8c8a7",
+            "border-color": "#cdd5dc",
             "border-style": "solid",
-            "border-width": 1.5,
+            "border-width": 1.8,
             "text-valign": "top",
             "text-halign": "center",
             "text-margin-y": 12,
@@ -138,8 +141,8 @@ async function loadGraph(url) {
           selector: 'node[node_type = "method"]',
           style: {
             "background-color": "#162633",
-            "border-color": "#7fcfb6",
-            "border-width": 1,
+            "border-color": "#cfd7dd",
+            "border-width": 1.6,
             "font-size": 10,
             "text-wrap": "wrap",
             "text-max-width": 220,
@@ -152,11 +155,53 @@ async function loadGraph(url) {
           },
         },
         {
+          selector: 'node[node_type = "package"][iteration_state = "add"], node[node_type = "file"][iteration_state = "add"], node[node_type = "method"][iteration_state = "add"]',
+          style: {
+            "border-color": "#7ee787",
+            "border-width": 4.5,
+            "background-color": "#173324",
+          },
+        },
+        {
+          selector: 'node[node_type = "file"][iteration_state = "add"]',
+          style: {
+            color: "#f7f2e8",
+          },
+        },
+        {
+          selector: 'node[node_type = "package"][iteration_state = "change"], node[node_type = "file"][iteration_state = "change"], node[node_type = "method"][iteration_state = "change"]',
+          style: {
+            "border-color": "#f1c95b",
+            "border-width": 4.5,
+            "background-color": "#2a2416",
+          },
+        },
+        {
+          selector: 'node[node_type = "file"][iteration_state = "change"]',
+          style: {
+            color: "#f7f2e8",
+          },
+        },
+        {
+          selector: 'node[node_type = "package"][iteration_state = "remove"], node[node_type = "file"][iteration_state = "remove"], node[node_type = "method"][iteration_state = "remove"]',
+          style: {
+            "border-color": "#ff6b6b",
+            "border-width": 4.5,
+            "background-color": "#311819",
+          },
+        },
+        {
+          selector: 'node[node_type = "file"][iteration_state = "remove"]',
+          style: {
+            color: "#f7f2e8",
+          },
+        },
+        {
           selector: "edge",
           style: {
-            width: 1.5,
-            "line-color": "#b89490",
-            "target-arrow-color": "#f3b86c",
+            width: 1.8,
+            "line-color": "#d4dbe0",
+            "target-arrow-color": "#d4dbe0",
             "target-arrow-shape": "triangle",
             "curve-style": "round-taxi",
             "taxi-direction": "rightward",
@@ -169,6 +214,7 @@ async function loadGraph(url) {
         {
           selector: 'edge[iteration_state = "add"]',
           style: {
+            width: 4,
             "line-color": "#7ee787",
             "target-arrow-color": "#7ee787",
           },
@@ -176,6 +222,7 @@ async function loadGraph(url) {
         {
           selector: 'edge[iteration_state = "change"]',
           style: {
+            width: 4,
             "line-color": "#f1c95b",
             "target-arrow-color": "#f1c95b",
           },
@@ -183,6 +230,7 @@ async function loadGraph(url) {
         {
           selector: 'edge[iteration_state = "remove"]',
           style: {
+            width: 4,
             "line-color": "#ff6b6b",
             "target-arrow-color": "#ff6b6b",
           },
