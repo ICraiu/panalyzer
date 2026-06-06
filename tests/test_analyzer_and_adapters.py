@@ -110,8 +110,6 @@ def test_project_analysis_service_returns_all_artifacts(sample_project: Path) ->
     assert artifacts.diagram.root == artifacts.project.root
     assert artifacts.graph.root == artifacts.project.root
     assert artifacts.diagram.summary.package_count == artifacts.graph.summary.package_count
-
-
 def test_graph_document_adapter_preserves_exact_node_contract(sample_project: Path) -> None:
     project = PythonAnalyzer().analyze(sample_project, AnalyzerConfig())
     graph = GraphDocumentAdapter().to_document(project)

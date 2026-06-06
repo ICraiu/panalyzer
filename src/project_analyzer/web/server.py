@@ -54,9 +54,18 @@ def _build_handler(routes: WebRoutes) -> type[BaseHTTPRequestHandler]:
                 message = parse_qs(parsed.query).get("message", [""])[0] or None
                 self._send(*routes.homepage(message=message))
                 return
+            if path == "/api/projects":
+                self._send(*routes.list_projects_api())
+                return
+            if path.startswith("/api/projects/") and path.endswith("/structure"):
+                project_id = path.removeprefix("/api/projects/").removesuffix("/structure").strip("/")
+                refresh = parse_qs(parsed.query).get("refresh", ["0"])[0] == "1"
+                self._send(*routes.project_structure(project_id, refresh=refresh))
+                return
             if path.startswith("/projects/") and path.endswith("/graph"):
                 project_id = path.removeprefix("/projects/").removesuffix("/graph").strip("/")
-                self._send(*routes.project_graph(project_id))
+                refresh = parse_qs(parsed.query).get("refresh", ["0"])[0] == "1"
+                self._send(*routes.project_graph(project_id, refresh=refresh))
                 return
             if path.startswith("/projects/"):
                 project_id = path.removeprefix("/projects/").strip("/")

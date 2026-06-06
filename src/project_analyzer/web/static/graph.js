@@ -21,7 +21,7 @@ async function loadGraph(url) {
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     const payload = await response.json();
     if (!response.ok) {
-      showGraphError(payload?.error?.message || "Failed to load graph data.");
+      showGraphError(payload?.error);
       hideLoading();
       return;
     }
@@ -374,7 +374,7 @@ function buildMethodGraphState(graph) {
           ? shortFileLabel(node)
           : nodeType(node) === "package"
             ? shortPackageLabel(node)
-            : node.label,
+            : methodDisplayLabel(node),
       node_type: nodeType(node),
       view_mode: "method",
       parent: node.parent_id || undefined,
@@ -601,12 +601,29 @@ function renderFallback(payload) {
   hideHovercard();
 }
 
-function showGraphError(message) {
+function showGraphError(error) {
   hideHovercard();
+  const title = proposalFailureTitle(error?.code);
+  const message = proposalFailureMessage(error);
+  const issueItems = Array.isArray(error?.errors)
+    ? error.errors
+      .map((issue) => `<li>${escapeHtml(issue.message || issue.code || "Proposal error")}</li>`)
+      .join("")
+    : "";
   if (proposalStatus) {
     proposalStatus.hidden = false;
     proposalStatus.classList.add("graph-proposal-status--error");
-    proposalStatus.innerHTML = `<strong>Proposal blocked</strong><div>${escapeHtml(message)}</div>`;
+    proposalStatus.innerHTML = `
+      <div class="graph-proposal-status__header">
+        <div class="graph-proposal-status__heading">
+          <strong>${escapeHtml(title)}</strong>
+        </div>
+        ${proposalStatusCloseButton()}
+      </div>
+      <div>${escapeHtml(message)}</div>
+      ${issueItems ? `<ul class="graph-proposal-status__issues">${issueItems}</ul>` : ""}
+    `;
+    bindProposalStatusCloseButton();
   }
   root.innerHTML = `
     <div class="empty-state">
@@ -637,24 +654,69 @@ function renderProposalStatus(activeProposal, warnings) {
   if (!proposalStatus) {
     return;
   }
-  if (!activeProposal) {
-    proposalStatus.hidden = true;
-    proposalStatus.classList.remove("graph-proposal-status--error");
-    proposalStatus.innerHTML = "";
-    return;
-  }
   const warningCount = Array.isArray(warnings) ? warnings.length : 0;
   const warningItems = Array.isArray(warnings)
     ? warnings.map((warning) => `<li>${escapeHtml(warning.message || warning.code || "Warning")}</li>`).join("")
     : "";
+  if (!activeProposal) {
+    if (warningCount === 0) {
+      proposalStatus.hidden = true;
+      proposalStatus.classList.remove("graph-proposal-status--error");
+      proposalStatus.innerHTML = "";
+      return;
+    }
+    proposalStatus.hidden = false;
+    proposalStatus.classList.add("graph-proposal-status--error");
+    proposalStatus.innerHTML = `
+      <div class="graph-proposal-status__header">
+        <div class="graph-proposal-status__heading">
+          <strong>Proposal ignored</strong>
+        </div>
+        ${proposalStatusCloseButton()}
+      </div>
+      <div>Showing the current scanned architecture.</div>
+      <ul class="graph-proposal-status__issues">${warningItems}</ul>
+    `;
+    bindProposalStatusCloseButton();
+    return;
+  }
+  const metadata = [
+    ["Created", proposalTimestamp(activeProposal.created_at)],
+    ["Author", activeProposal.author],
+    ["Model", activeProposal.source_model],
+  ].filter(([, value]) => value);
   proposalStatus.hidden = false;
   proposalStatus.classList.remove("graph-proposal-status--error");
   proposalStatus.innerHTML = `
-    <div><strong>Active proposal</strong> ${escapeHtml(activeProposal.name)}</div>
+    <div class="graph-proposal-status__header">
+      <div class="graph-proposal-status__heading">
+        <strong>Active proposal</strong> ${escapeHtml(activeProposal.name)}
+      </div>
+      ${proposalStatusCloseButton()}
+    </div>
     <div><code>${escapeHtml(activeProposal.id)}</code></div>
+    ${metadata.length > 0 ? `<dl class="graph-proposal-status__meta">${metadata.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : ""}
     <div>${warningCount} warning${warningCount === 1 ? "" : "s"}</div>
     ${warningCount > 0 ? `<ul class="graph-proposal-status__warnings">${warningItems}</ul>` : ""}
   `;
+  bindProposalStatusCloseButton();
+}
+
+function proposalStatusCloseButton() {
+  return '<button type="button" class="graph-proposal-status__close" aria-label="Dismiss proposal status">x</button>';
+}
+
+function bindProposalStatusCloseButton() {
+  if (!proposalStatus) {
+    return;
+  }
+  const closeButton = proposalStatus.querySelector(".graph-proposal-status__close");
+  if (!closeButton) {
+    return;
+  }
+  closeButton.onclick = () => {
+    proposalStatus.hidden = true;
+  };
 }
 
 function mergeTransitionState(left, right) {
@@ -1189,7 +1251,65 @@ function edgeEndpointLabel(node) {
   if (nodeType(node) === "package") {
     return shortPackageLabel(node);
   }
-  return node.label || node.id;
+  return methodDisplayLabel(node);
+}
+
+function methodDisplayLabel(node) {
+  const fallbackLabel = node.label || node.id || "";
+  const methodName = displayMethodName(node.name || node.qualname || fallbackLabel);
+  const lineSuffix = lineLabel(node.line);
+  if (node.signature && node.signature.startsWith("class ")) {
+    return lineSuffix ? `class ${methodName} | ${lineSuffix}` : `class ${methodName}`;
+  }
+  if (methodName) {
+    return lineSuffix ? `${methodName}(...) | ${lineSuffix}` : `${methodName}(...)`;
+  }
+  return fallbackLabel.replace(/\s+\|\s+L0\b/g, "");
+}
+
+function displayMethodName(value) {
+  if (!value) {
+    return "";
+  }
+  const withoutSuffix = value.replace(/\(\.\.\.\)\s+\|\s+L\d+\b/g, "").replace(/^class\s+/, "");
+  const parts = withoutSuffix.split(".");
+  return parts[parts.length - 1] || withoutSuffix;
+}
+
+function lineLabel(line) {
+  if (typeof line !== "number" || line < 1) {
+    return "";
+  }
+  return `L${line}`;
+}
+
+function proposalTimestamp(createdAt) {
+  if (!createdAt) {
+    return "";
+  }
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return createdAt;
+  }
+  return parsed.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+function proposalFailureTitle(code) {
+  if (code === "invalid_latest_proposal") {
+    return "Proposal could not be applied";
+  }
+  return "Proposal could not be loaded";
+}
+
+function proposalFailureMessage(error) {
+  return error?.message || "Failed to load graph data.";
 }
 
 function applyPackagePacking(packageLayouts, packageGapX, packageGapY, startX, startY) {

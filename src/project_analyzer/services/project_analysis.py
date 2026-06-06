@@ -20,7 +20,7 @@ class AnalysisArtifacts:
 class ProjectAnalysisService:
     """Application use case for analyzing a project tree."""
 
-    def analyze_project(self, project_root: Path) -> AnalysisArtifacts:
+    def analyze_project(self, project_root: Path, *, refresh: bool = False) -> AnalysisArtifacts:
         root = project_root.resolve()
         config = load_config(root)
         project = PythonAnalyzer().analyze(root, config)

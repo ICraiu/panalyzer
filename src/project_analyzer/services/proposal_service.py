@@ -6,6 +6,8 @@ import json
 import subprocess
 import time
 
+from pydantic import ValidationError
+
 from ..diagram_document_adapter import DiagramDocumentAdapter
 from ..graph_adapter import GraphDocumentAdapter, _method_display_label
 from ..models import (
@@ -29,6 +31,7 @@ from ..models import (
     ProposalFile,
     ProposalMethod,
     ProposalPackage,
+    ProposalPreview,
     ProposalReference,
     ProposalSaveResult,
     ProposalState,
@@ -745,10 +748,26 @@ class ProposalService:
         project: Project,
         payload: dict,
     ) -> ProposalSaveResult:
+        result = self.validate(
+            project_root=project_root,
+            project=project,
+            payload=payload,
+        )
+        proposal = result.proposal
+        self.store.save(project_id, proposal)
+        return result
+
+    def validate(
+        self,
+        *,
+        project_root: Path,
+        project: Project,
+        payload: dict,
+    ) -> ProposalSaveResult:
         proposal = ProposalDocument.model_validate(payload)
         validation = self.validator.validate(project, proposal)
         validation = self._with_sha_validation(validation, proposal, project_root)
-        self.store.save(project_id, proposal)
+        validation = self._with_preview(validation, project, proposal)
         return ProposalSaveResult(proposal=proposal, validation=validation)
 
     def load_latest(self, project_id: str) -> ProposalDocument | None:
@@ -761,27 +780,30 @@ class ProposalService:
         project_root: Path,
         project: Project,
     ) -> tuple[GraphDocument, DiagramDocument]:
-        proposal = self.store.latest(project_id)
+        proposal, ignored_warning = self._load_latest_for_analysis(project_id)
         if proposal is None:
-            graph = GraphDocumentAdapter().to_document(project)
-            diagram = DiagramDocumentAdapter().to_document_from_graph(graph)
-            return graph, diagram
+            return self._base_documents(project, warning=ignored_warning)
 
         current_sha = self.sha_resolver.current_sha(project_root)
         if proposal.project_sha != current_sha:
-            issue = ValidationIssue(
-                code="project_sha_mismatch",
-                path="project_sha",
-                message=f"Proposal '{proposal.id}' targets SHA '{proposal.project_sha}' but project is at '{current_sha}'.",
+            return self._base_documents(
+                project,
+                warning=ValidationIssue(
+                    code="ignored_sha_mismatched_latest_proposal",
+                    path="project_sha",
+                    message="Proposal SHAs do not match anymore.",
+                ),
             )
-            raise ProposalApplicationError(issue.code, issue.message, errors=[issue])
 
         validation = self.validator.validate(project, proposal)
         if not validation.valid:
-            raise ProposalApplicationError(
-                "invalid_latest_proposal",
-                f"Latest proposal '{proposal.id}' is invalid and cannot be applied.",
-                errors=validation.errors,
+            return self._base_documents(
+                project,
+                warning=ValidationIssue(
+                    code="ignored_invalid_latest_proposal",
+                    path="proposal",
+                    message=f"Latest proposal '{proposal.id}' is invalid and was ignored.",
+                ),
             )
 
         graph = self.graph_service.to_graph(project, proposal, validation)
@@ -800,7 +822,12 @@ class ProposalService:
             current_sha = self.sha_resolver.current_sha(project_root)
         except ProposalApplicationError as exc:
             errors.extend(exc.errors)
-            return ValidationResult(valid=False, warnings=warnings, errors=_dedupe_issues(errors))
+            return ValidationResult(
+                valid=False,
+                warnings=warnings,
+                errors=_dedupe_issues(errors),
+                preview=validation.preview,
+            )
         if proposal.project_sha != current_sha:
             errors.append(
                 ValidationIssue(
@@ -809,7 +836,79 @@ class ProposalService:
                     message=f"Proposal targets SHA '{proposal.project_sha}' but project is at '{current_sha}'.",
                 )
             )
-        return ValidationResult(valid=not errors, warnings=warnings, errors=_dedupe_issues(errors))
+        return ValidationResult(
+            valid=not errors,
+            warnings=warnings,
+            errors=_dedupe_issues(errors),
+            preview=validation.preview,
+        )
+
+    def _with_preview(
+        self,
+        validation: ValidationResult,
+        project: Project,
+        proposal: ProposalDocument,
+    ) -> ValidationResult:
+        preview = self._build_preview(project, proposal, validation)
+        return ValidationResult(
+            valid=validation.valid,
+            warnings=validation.warnings,
+            errors=validation.errors,
+            preview=preview,
+        )
+
+    def _build_preview(
+        self,
+        project: Project,
+        proposal: ProposalDocument,
+        validation: ValidationResult,
+    ) -> ProposalPreview:
+        try:
+            graph = self.graph_service.to_graph(project, proposal, validation)
+            diagram = self.graph_service.to_diagram(graph)
+            return ProposalPreview(
+                applied=True,
+                graph=graph.model_dump(mode="json"),
+                diagram=diagram.model_dump(mode="json"),
+            )
+        except Exception as exc:
+            graph, diagram = self._base_documents(project)
+            return ProposalPreview(
+                applied=False,
+                graph=graph.model_dump(mode="json"),
+                diagram=diagram.model_dump(mode="json"),
+                issues=[
+                    ValidationIssue(
+                        code="preview_generation_failed",
+                        path="$",
+                        message=f"Proposal preview could not be built: {exc}",
+                    )
+                ],
+            )
+
+    def _load_latest_for_analysis(self, project_id: str) -> tuple[ProposalDocument | None, ValidationIssue | None]:
+        try:
+            return self.store.latest(project_id), None
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            return (
+                None,
+                ValidationIssue(
+                    code="ignored_unloadable_latest_proposal",
+                    path="proposal",
+                    message=f"Latest proposal could not be loaded and was ignored: {exc}",
+                ),
+            )
+
+    def _base_documents(
+        self,
+        project: Project,
+        warning: ValidationIssue | None = None,
+    ) -> tuple[GraphDocument, DiagramDocument]:
+        graph = GraphDocumentAdapter().to_document(project)
+        if warning is not None:
+            graph.warnings = [warning]
+        diagram = DiagramDocumentAdapter().to_document_from_graph(graph)
+        return graph, diagram
 
 
 def build_project_index(project: Project) -> ProjectIndex:

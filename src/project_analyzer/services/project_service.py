@@ -36,9 +36,22 @@ class ProjectService:
     def delete_project(self, project_id: str) -> bool:
         return self.registry.delete_project(project_id)
 
-    def get_project_context(self, project_id: str) -> ProjectContext | None:
+    def get_project_structure(
+        self,
+        project_id: str,
+        *,
+        refresh: bool = False,
+    ) -> ProjectContext | None:
         project = self.registry.get_project(project_id)
         if project is None:
             return None
-        analysis = self.analysis_service.analyze_project(Path(project.path))
+        analysis = self.analysis_service.analyze_project(Path(project.path), refresh=refresh)
         return ProjectContext(registration=project, analysis=analysis)
+
+    def get_project_context(
+        self,
+        project_id: str,
+        *,
+        refresh: bool = False,
+    ) -> ProjectContext | None:
+        return self.get_project_structure(project_id, refresh=refresh)

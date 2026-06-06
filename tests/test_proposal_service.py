@@ -121,6 +121,9 @@ def test_proposal_service_saves_invalid_proposal_but_reports_sha_mismatch(sample
 
     assert result.validation.valid is False
     assert any(issue.code == "project_sha_mismatch" for issue in result.validation.errors)
+    assert result.validation.preview is not None
+    assert result.validation.preview.applied is True
+    assert result.validation.preview.graph["active_proposal"]["id"] == "proposal_1"
     stored = service.load_latest("demo")
     assert stored is not None
     assert stored.id == "proposal_1"
@@ -260,6 +263,151 @@ def test_analyze_with_latest_applies_states_to_graph_and_diagram(sample_project:
     assert graph.active_proposal is not None
     assert graph.active_proposal.id == "proposal_1"
     assert any(warning.code == "reference_change_requires_signature_adaptation_confirmation" for warning in graph.warnings)
+
+
+def test_analyze_with_latest_ignores_invalid_latest_proposal(sample_project: Path, tmp_path: Path) -> None:
+    project = PythonAnalyzer().analyze(sample_project, AnalyzerConfig())
+    service = ProposalService(
+        ProposalStore(tmp_path / "proposals"),
+        sha_resolver=FixedShaResolver("sha123"),
+    )
+
+    service.save(
+        project_id="demo",
+        project_root=sample_project,
+        project=project,
+        payload={
+            "id": "proposal_invalid",
+            "name": "invalid",
+            "created_at": "2026-06-04T10:15:00Z",
+            "author": "codex",
+            "source_model": "gpt-5",
+            "rationale": "missing file declaration",
+            "project_sha": "sha123",
+            "packages": [],
+            "files": [],
+            "methods": [
+                {
+                    "qualname": "sample_pkg.module_b.use_imports",
+                    "name": "use_imports",
+                    "file_relative_path": "src/sample_pkg/module_b.py",
+                    "iteration_state": "change",
+                }
+            ],
+            "references": [],
+        },
+    )
+
+    graph, diagram = service.analyze_with_latest(
+        project_id="demo",
+        project_root=sample_project,
+        project=project,
+    )
+
+    assert graph.active_proposal is None
+    assert any(warning.code == "ignored_invalid_latest_proposal" for warning in graph.warnings)
+    assert graph.summary.file_count > 0
+    assert diagram.summary.file_count > 0
+
+
+def test_analyze_with_latest_ignores_unloadable_latest_proposal(sample_project: Path, tmp_path: Path) -> None:
+    project = PythonAnalyzer().analyze(sample_project, AnalyzerConfig())
+    store = ProposalStore(tmp_path / "proposals")
+    service = ProposalService(
+        store,
+        sha_resolver=FixedShaResolver("sha123"),
+    )
+    project_dir = store.root / "demo"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "99999999999999999999__broken__proposal.json").write_text("{not json", encoding="utf-8")
+
+    graph, diagram = service.analyze_with_latest(
+        project_id="demo",
+        project_root=sample_project,
+        project=project,
+    )
+
+    assert graph.active_proposal is None
+    assert any(warning.code == "ignored_unloadable_latest_proposal" for warning in graph.warnings)
+    assert graph.summary.method_count > 0
+    assert diagram.summary.transition_count >= 0
+
+
+def test_analyze_with_latest_ignores_sha_mismatched_latest_proposal(sample_project: Path, tmp_path: Path) -> None:
+    project = PythonAnalyzer().analyze(sample_project, AnalyzerConfig())
+    service = ProposalService(
+        ProposalStore(tmp_path / "proposals"),
+        sha_resolver=FixedShaResolver("actualsha"),
+    )
+
+    service.save(
+        project_id="demo",
+        project_root=sample_project,
+        project=project,
+        payload={
+            "id": "proposal_old_sha",
+            "name": "stale proposal",
+            "created_at": "2026-06-04T10:15:00Z",
+            "author": "codex",
+            "source_model": "gpt-5",
+            "rationale": "stale sha",
+            "project_sha": "oldsha",
+            "packages": [],
+            "files": [],
+            "methods": [],
+            "references": [],
+        },
+    )
+
+    graph, diagram = service.analyze_with_latest(
+        project_id="demo",
+        project_root=sample_project,
+        project=project,
+    )
+
+    assert graph.active_proposal is None
+    assert any(warning.code == "ignored_sha_mismatched_latest_proposal" for warning in graph.warnings)
+    assert any(warning.message == "Proposal SHAs do not match anymore." for warning in graph.warnings)
+    assert graph.summary.method_count > 0
+    assert diagram.summary.transition_count >= 0
+
+
+def test_validate_returns_fallback_preview_when_merge_cannot_be_built(sample_project: Path, tmp_path: Path) -> None:
+    project = PythonAnalyzer().analyze(sample_project, AnalyzerConfig())
+    service = ProposalService(
+        ProposalStore(tmp_path / "proposals"),
+        sha_resolver=FixedShaResolver("sha123"),
+    )
+
+    result = service.validate(
+        project_root=sample_project,
+        project=project,
+        payload={
+            "id": "proposal_preview_failure",
+            "name": "preview failure",
+            "created_at": "2026-06-04T10:15:00Z",
+            "author": "codex",
+            "source_model": "gpt-5",
+            "rationale": "missing file declaration for new method",
+            "project_sha": "sha123",
+            "packages": [],
+            "files": [],
+            "methods": [
+                {
+                    "qualname": "sample_pkg.module_new.added_method",
+                    "name": "added_method",
+                    "file_relative_path": "src/sample_pkg/module_new.py",
+                    "iteration_state": "add",
+                }
+            ],
+            "references": [],
+        },
+    )
+
+    assert result.validation.preview is not None
+    assert result.validation.preview.applied is False
+    assert result.validation.preview.issues[0].code == "preview_generation_failed"
+    assert result.validation.preview.graph["active_proposal"] is None
 
 
 def test_validator_rejects_changed_package_without_changed_file(sample_project: Path) -> None:

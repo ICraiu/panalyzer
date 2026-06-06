@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -67,10 +68,18 @@ class ValidationIssue(BaseModel):
     message: str
 
 
+class ProposalPreview(BaseModel):
+    applied: bool
+    graph: dict[str, Any]
+    diagram: dict[str, Any]
+    issues: list[ValidationIssue] = Field(default_factory=list)
+
+
 class ValidationResult(BaseModel):
     valid: bool
     warnings: list[ValidationIssue] = Field(default_factory=list)
     errors: list[ValidationIssue] = Field(default_factory=list)
+    preview: ProposalPreview | None = None
 
 
 class ProposalSaveResult(BaseModel):
@@ -87,4 +96,3 @@ class ProposalSummary(BaseModel):
     rationale: str
     project_sha: str
     validation: ValidationResult
-

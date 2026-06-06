@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 import json
@@ -18,13 +18,15 @@ from project_analyzer.models import (
     GraphPackageNode,
     GraphSummary,
     IterationState,
+    ProposalSummary,
     Project,
     ValidationIssue,
+    ValidationResult,
 )
 from project_analyzer.services import ProposalApplicationError
 from project_analyzer.services.project_analysis import AnalysisArtifacts
 from project_analyzer.services.project_registry import RegisteredProject
-from project_analyzer.services.project_service import ProjectContext
+from project_analyzer.services.project_service import ProjectService
 from project_analyzer.web.app import WebAppContext
 from project_analyzer.web.routes import WebRoutes
 from project_analyzer.web.server import _build_handler
@@ -43,10 +45,10 @@ class FakeRegistry:
                 return project
         return None
 
-    def add_project(self, path: str) -> RegisteredProject:
+    def add_project(self, path: str, name: str | None = None) -> RegisteredProject:
         if not path.strip():
             raise ValueError("path is required")
-        project = RegisteredProject(id="new123", name="new", path=path)
+        project = RegisteredProject(id="new123", name=name or "new", path=path)
         self.projects.append(project)
         return project
 
@@ -59,8 +61,10 @@ class FakeRegistry:
 @dataclass
 class FakeAnalysisService:
     graph_root: str
+    calls: int = 0
 
-    def analyze_project(self, project_root: Path) -> AnalysisArtifacts:
+    def analyze_project(self, project_root: Path, *, refresh: bool = False) -> AnalysisArtifacts:
+        self.calls += 1
         root = str(project_root)
         return AnalysisArtifacts(
             project=Project(root=root, packages=[], references=[]),
@@ -83,6 +87,9 @@ class FakeAnalysisService:
 @dataclass
 class FakeProposalService:
     fail: bool = False
+    sha_resolver: object = field(
+        default_factory=lambda: SimpleNamespace(current_sha=lambda project_root: "abc123")
+    )
 
     def analyze_with_latest(self, *, project_id: str, project_root: Path, project: Project):
         if self.fail:
@@ -138,8 +145,23 @@ class FakeProposalService:
                         iteration_state=IterationState.REMOVE,
                     )
                 ],
-                active_proposal=None,
-                warnings=[],
+                active_proposal=ProposalSummary(
+                    id="proposal_1",
+                    name="demo proposal",
+                    created_at="2026-06-04T10:15:00Z",
+                    author="codex",
+                    source_model="gpt-5",
+                    rationale="test rationale",
+                    project_sha="abc123",
+                    validation=ValidationResult(valid=True, warnings=[], errors=[]),
+                ),
+                warnings=[
+                    ValidationIssue(
+                        code="reference_change_requires_signature_adaptation_confirmation",
+                        path="references[0]",
+                        message="Signature adaptation confirmation is required.",
+                    )
+                ],
             ),
             DiagramDocument(
                 root=root,
@@ -182,6 +204,34 @@ class FakeProposalService:
                 valid=False,
                 model_dump=lambda mode="json": {
                     "valid": False,
+                    "preview": {
+                        "applied": True,
+                        "graph": {
+                            "root": str(project_root),
+                            "summary": {
+                                "package_count": 0,
+                                "file_count": 0,
+                                "method_count": 0,
+                                "edge_count": 0,
+                            },
+                            "nodes": [],
+                            "edges": [],
+                            "active_proposal": payload,
+                            "warnings": [],
+                        },
+                        "diagram": {
+                            "root": str(project_root),
+                            "summary": {
+                                "package_count": 0,
+                                "file_count": 0,
+                                "transition_count": 0,
+                            },
+                            "packages": [],
+                            "files": [],
+                            "transitions": [],
+                        },
+                        "issues": [],
+                    },
                     "warnings": [],
                     "errors": [
                         {
@@ -195,46 +245,28 @@ class FakeProposalService:
         )
 
 
-def _routes(projects: list[RegisteredProject], *, proposal_fail: bool = False) -> WebRoutes:
+def _routes(
+    projects: list[RegisteredProject],
+    *,
+    proposal_fail: bool = False,
+) -> tuple[WebRoutes, FakeAnalysisService]:
     registry = FakeRegistry(projects)
     analysis_service = FakeAnalysisService(graph_root=str(Path.cwd()))
-
-    class FakeProjectService:
-        def list_projects(self):
-            return registry.list_projects()
-
-        def get_project(self, project_id: str):
-            return registry.get_project(project_id)
-
-        def add_project(self, path: str, name: str | None = None):
-            return registry.add_project(path)
-
-        def delete_project(self, project_id: str):
-            return registry.delete_project(project_id)
-
-        def get_project_context(self, project_id: str):
-            project = registry.get_project(project_id)
-            if project is None:
-                return None
-            return ProjectContext(
-                registration=project,
-                analysis=analysis_service.analyze_project(Path(project.path)),
-            )
-
     context = WebAppContext(
         base_dir=Path.cwd(),
-        project_service=FakeProjectService(),
+        project_service=ProjectService(registry=registry, analysis_service=analysis_service),
         proposal_service=FakeProposalService(fail=proposal_fail),
     )
-    return WebRoutes(context)
+    return WebRoutes(context), analysis_service
 
 
 def test_homepage_renders_empty_and_populated_states() -> None:
-    status, _, payload = _routes([]).homepage()
+    routes, _ = _routes([])
+    status, _, payload = routes.homepage()
     assert status == 200
     assert "No projects saved yet." in payload.decode("utf-8")
 
-    routes = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
+    routes, _ = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
     status, _, payload = routes.homepage(message="saved")
     html = payload.decode("utf-8")
 
@@ -249,7 +281,7 @@ def test_homepage_renders_empty_and_populated_states() -> None:
 
 
 def test_add_project_returns_redirect_or_error_page() -> None:
-    routes = _routes([])
+    routes, _ = _routes([])
 
     status, _, _, headers = routes.add_project(b"path=%2Ftmp%2Fproject")
     assert status == 303
@@ -262,7 +294,7 @@ def test_add_project_returns_redirect_or_error_page() -> None:
 
 
 def test_delete_project_returns_redirect_or_not_found() -> None:
-    routes = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
+    routes, _ = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
 
     status, _, _, headers = routes.delete_project("abc123")
     assert status == 303
@@ -274,11 +306,12 @@ def test_delete_project_returns_redirect_or_not_found() -> None:
 
 
 def test_project_detail_and_graph_render_known_project() -> None:
-    routes = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
+    routes, analysis_service = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
 
     status, _, payload = routes.project_detail("abc123", created=True)
     html = payload.decode("utf-8")
     assert status == 200
+    assert analysis_service.calls == 0
     assert 'data-graph-url="/projects/abc123/graph"' in html
     assert "panalyzer-created-project" in html
     assert 'id="graph-hovercard"' in html
@@ -289,12 +322,15 @@ def test_project_detail_and_graph_render_known_project() -> None:
     parsed = json.loads(payload.decode("utf-8"))
     assert status == 200
     assert content_type.startswith("application/json")
+    assert analysis_service.calls == 1
     assert parsed["graph"]["root"] == "/tmp/demo"
     assert parsed["graph"]["nodes"][0]["iteration_state"] == "change"
+    assert parsed["graph"]["active_proposal"]["created_at"] == "2026-06-04T10:15:00Z"
+    assert parsed["graph"]["warnings"][0]["code"] == "reference_change_requires_signature_adaptation_confirmation"
 
 
 def test_project_graph_returns_explicit_error_when_latest_proposal_cannot_apply() -> None:
-    routes = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")], proposal_fail=True)
+    routes, _ = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")], proposal_fail=True)
 
     status, content_type, payload = routes.project_graph("abc123")
     parsed = json.loads(payload.decode("utf-8"))
@@ -305,7 +341,7 @@ def test_project_graph_returns_explicit_error_when_latest_proposal_cannot_apply(
 
 
 def test_add_proposal_returns_validation_payload() -> None:
-    routes = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
+    routes, _ = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
 
     status, content_type, payload, headers = routes.add_proposal(
         "abc123",
@@ -317,11 +353,101 @@ def test_add_proposal_returns_validation_payload() -> None:
     assert content_type.startswith("application/json")
     assert headers == {}
     assert parsed["validation"]["valid"] is False
+    assert parsed["validation"]["preview"]["applied"] is True
+    assert parsed["validation"]["preview"]["graph"]["active_proposal"]["id"] == "p1"
     assert parsed["validation"]["errors"][0]["code"] == "project_sha_mismatch"
 
 
+def test_project_graph_shows_base_graph_when_latest_proposal_is_ignored() -> None:
+    routes, _ = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")], proposal_fail=True)
+
+    routes.context.proposal_service = SimpleNamespace(
+        analyze_with_latest=lambda **kwargs: (
+            GraphDocument(
+                root="/tmp/demo",
+                summary=GraphSummary(package_count=0, file_count=0, method_count=0, edge_count=0),
+                nodes=[],
+                edges=[],
+                active_proposal=None,
+                warnings=[
+                    ValidationIssue(
+                        code="ignored_sha_mismatched_latest_proposal",
+                        path="project_sha",
+                        message="Latest proposal was ignored.",
+                    )
+                ],
+            ),
+            DiagramDocument(
+                root="/tmp/demo",
+                summary=DiagramSummary(package_count=0, file_count=0, transition_count=0),
+                packages=[],
+                files=[],
+                transitions=[],
+            ),
+        )
+    )
+
+    status, content_type, payload = routes.project_graph("abc123")
+    parsed = json.loads(payload.decode("utf-8"))
+
+    assert status == 200
+    assert content_type.startswith("application/json")
+    assert parsed["graph"]["active_proposal"] is None
+    assert parsed["graph"]["warnings"][0]["code"] == "ignored_sha_mismatched_latest_proposal"
+
+
+def test_list_projects_api_returns_registered_projects() -> None:
+    routes, _ = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
+
+    status, content_type, payload = routes.list_projects_api()
+    parsed = json.loads(payload.decode("utf-8"))
+
+    assert status == 200
+    assert content_type.startswith("application/json")
+    assert parsed == {
+        "projects": [
+            {
+                "id": "abc123",
+                "name": "demo",
+                "path": "/tmp/demo",
+            }
+        ]
+    }
+
+
+def test_project_structure_reanalyzes_each_request() -> None:
+    routes, analysis_service = _routes([RegisteredProject(id="abc123", name="demo", path="/tmp/demo")])
+
+    status, content_type, payload = routes.project_structure("abc123")
+    parsed = json.loads(payload.decode("utf-8"))
+
+    assert status == 200
+    assert content_type.startswith("application/json")
+    assert analysis_service.calls == 1
+    assert parsed["project"]["id"] == "abc123"
+    assert parsed["project_sha"] == "abc123"
+    assert parsed["structure"]["root"] == "/tmp/demo"
+    assert parsed["diagram"]["root"] == "/tmp/demo"
+
+    status, _, _ = routes.project_structure("abc123")
+    assert status == 200
+    assert analysis_service.calls == 2
+
+    status, _, _ = routes.project_structure("abc123", refresh=True)
+    assert status == 200
+    assert analysis_service.calls == 3
+
+    status, _, _ = routes.project_graph("abc123")
+    assert status == 200
+    assert analysis_service.calls == 4
+
+    status, _, _ = routes.project_graph("abc123", refresh=True)
+    assert status == 200
+    assert analysis_service.calls == 5
+
+
 def test_static_asset_serving_blocks_path_escape() -> None:
-    routes = _routes([])
+    routes, _ = _routes([])
 
     status, content_type, payload, headers = routes.static_asset("app.css")
     assert status == 200
@@ -336,7 +462,12 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert ".page-loading" in app_css
     assert ".page-loading__spinner" in app_css
     assert ".graph-proposal-status" in app_css
+    assert ".graph-proposal-status[hidden]" in app_css
     assert ".graph-proposal-status--error" in app_css
+    assert ".graph-proposal-status__header" in app_css
+    assert ".graph-proposal-status__close" in app_css
+    assert ".graph-proposal-status__meta" in app_css
+    assert ".graph-proposal-status__issues" in app_css
     assert ".graph-proposal-status__warnings" in app_css
 
     status, content_type, payload, headers = routes.static_asset("graph.js")
@@ -370,7 +501,7 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert "width: 240" in graph_js
     assert "height: 52" in graph_js
     assert "renderProposalStatus(payload.graph?.active_proposal, payload.graph?.warnings || []);" in graph_js
-    assert "showGraphError(payload?.error?.message || \"Failed to load graph data.\");" in graph_js
+    assert "showGraphError(payload?.error);" in graph_js
     assert 'showLoading("Scanning project…");' in graph_js
     assert 'showLoading("Rendering graph…");' in graph_js
     assert 'Rendering ${currentMode === "file" ? "file" : "method"} view…' in graph_js
@@ -396,6 +527,18 @@ def test_static_asset_serving_blocks_path_escape() -> None:
     assert 'iteration_state: edge.iteration_state || "present"' in graph_js
     assert "file: buildFileGraphState(payload.graph)" in graph_js
     assert "diagram.transitions" not in graph_js
+    assert "proposalTimestamp(activeProposal.created_at)" in graph_js
+    assert "<strong>Proposal ignored</strong>" in graph_js
+    assert "Showing the current scanned architecture." in graph_js
+    assert "bindProposalStatusCloseButton()" in graph_js
+    assert 'closeButton.onclick = () => {' in graph_js
+    assert "graph-proposal-status__close" in graph_js
+    assert 'aria-label="Dismiss proposal status"' in graph_js
+    assert 'return lineSuffix ? `${methodName}(...) | ${lineSuffix}` : `${methodName}(...)`;' in graph_js
+    assert 'return fallbackLabel.replace(/\\s+\\|\\s+L0\\b/g, "");' in graph_js
+    assert 'return "Proposal could not be applied";' in graph_js
+    assert "graph-proposal-status__meta" in graph_js
+    assert "graph-proposal-status__issues" in graph_js
     assert "graph-proposal-status__warnings" in graph_js
 
     status, _, payload = routes.not_found()
@@ -409,7 +552,9 @@ def test_static_asset_serving_blocks_path_escape() -> None:
 def test_http_handler_dispatches_get_and_post_routes() -> None:
     routes = SimpleNamespace(
         homepage=lambda message=None: (200, "text/html; charset=utf-8", b"home"),
-        project_graph=lambda project_id: (200, "application/json; charset=utf-8", b"graph"),
+        list_projects_api=lambda: (200, "application/json; charset=utf-8", b"[]"),
+        project_structure=lambda project_id, refresh=False: (200, "application/json; charset=utf-8", b"structure"),
+        project_graph=lambda project_id, refresh=False: (200, "application/json; charset=utf-8", b"graph"),
         project_detail=lambda project_id, created=False: (200, "text/html; charset=utf-8", b"detail"),
         static_asset=lambda asset_name: (200, "text/javascript; charset=utf-8", b"js", {}),
         not_found=lambda: (404, "text/html; charset=utf-8", b"missing"),
@@ -420,9 +565,20 @@ def test_http_handler_dispatches_get_and_post_routes() -> None:
     handler_class = _build_handler(routes)
 
     sent: list[tuple] = []
+    fake_list_get = SimpleNamespace(path="/api/projects", _send=lambda *args, **kwargs: sent.append(args))
+    handler_class.do_GET(fake_list_get)
+    assert sent[0][0] == 200
+
+    fake_structure_get = SimpleNamespace(
+        path="/api/projects/demo/structure?refresh=1",
+        _send=lambda *args, **kwargs: sent.append(args),
+    )
+    handler_class.do_GET(fake_structure_get)
+    assert sent[1][0] == 200
+
     fake_get = SimpleNamespace(path="/projects/demo/graph", _send=lambda *args, **kwargs: sent.append(args))
     handler_class.do_GET(fake_get)
-    assert sent[0][0] == 200
+    assert sent[2][0] == 200
 
     fake_post = SimpleNamespace(
         path="/projects",
@@ -431,7 +587,7 @@ def test_http_handler_dispatches_get_and_post_routes() -> None:
         _send=lambda *args, **kwargs: sent.append(args),
     )
     handler_class.do_POST(fake_post)
-    assert sent[1][0] == 303
+    assert sent[3][0] == 303
 
     fake_proposal_post = SimpleNamespace(
         path="/projects/demo/proposals",
@@ -440,4 +596,4 @@ def test_http_handler_dispatches_get_and_post_routes() -> None:
         _send=lambda *args, **kwargs: sent.append(args),
     )
     handler_class.do_POST(fake_proposal_post)
-    assert sent[2][0] == 201
+    assert sent[4][0] == 201

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 import sys
 from types import SimpleNamespace
 
@@ -8,87 +7,6 @@ import pytest
 import typer
 
 from project_analyzer import cli
-from project_analyzer.models import (
-    DiagramDocument,
-    DiagramSummary,
-    GraphDocument,
-    GraphSummary,
-    Project,
-)
-from project_analyzer.services.project_analysis import AnalysisArtifacts
-
-
-def _sample_artifacts(root: Path) -> AnalysisArtifacts:
-    return AnalysisArtifacts(
-        project=Project(root=str(root), packages=[], references=[]),
-        diagram=DiagramDocument(
-            root=str(root),
-            summary=DiagramSummary(package_count=0, file_count=0, transition_count=0),
-            packages=[],
-            files=[],
-            transitions=[],
-        ),
-        graph=GraphDocument(
-            root=str(root),
-            summary=GraphSummary(package_count=0, file_count=0, method_count=0, edge_count=0),
-            nodes=[],
-            edges=[],
-        ),
-    )
-
-
-def test_analyze_path_prints_diagram_json(tmp_path: Path, monkeypatch) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    outputs: list[str] = []
-
-    monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append(value))
-    monkeypatch.setattr(
-        "project_analyzer.cli.ProjectAnalysisService.analyze_project",
-        lambda self, root: _sample_artifacts(root),
-    )
-
-    cli.analyze_path(str(project_root))
-
-    assert '"root"' in outputs[0]
-    assert str(project_root.resolve()) in outputs[0]
-    assert '"packages"' in outputs[0]
-    assert '"files"' in outputs[0]
-    assert '"transitions"' in outputs[0]
-    assert '"references"' not in outputs[0]
-    assert '"nodes"' not in outputs[0]
-
-
-def test_analyze_path_with_all_prints_full_project_json(tmp_path: Path, monkeypatch) -> None:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    outputs: list[str] = []
-
-    monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append(value))
-    monkeypatch.setattr(
-        "project_analyzer.cli.ProjectAnalysisService.analyze_project",
-        lambda self, root: _sample_artifacts(root),
-    )
-
-    cli.analyze_path(str(project_root), include_all=True)
-
-    assert '"root"' in outputs[0]
-    assert '"packages"' in outputs[0]
-    assert '"references"' in outputs[0]
-    assert '"files"' not in outputs[0]
-    assert '"transitions"' not in outputs[0]
-
-
-def test_analyze_path_rejects_missing_path(tmp_path: Path, monkeypatch) -> None:
-    outputs: list[tuple[str, bool]] = []
-    monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append((value, err)))
-
-    with pytest.raises(typer.Exit) as exc_info:
-        cli.analyze_path(str(tmp_path / "missing"))
-
-    assert exc_info.value.exit_code == 1
-    assert outputs[0][1] is True
-
 
 def test_run_dispatches_to_subcommand_app(monkeypatch) -> None:
     called: list[str] = []
@@ -122,59 +40,32 @@ def test_run_prints_help(monkeypatch) -> None:
 
     assert outputs[0].startswith("Usage:")
     assert "panalyzer-web" not in outputs[0]
-    assert "-a, --all" in outputs[0]
+    assert "project endpoints" in outputs[0]
     assert "panalyzer restart" in outputs[0]
+    assert "panalyzer <path>" not in outputs[0]
+    assert "panalyzer -a" not in outputs[0]
 
 
-def test_run_rejects_extra_args(monkeypatch) -> None:
+def test_run_rejects_removed_path_analysis_args(monkeypatch) -> None:
     outputs: list[tuple[str, bool]] = []
     monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append((value, err)))
-    monkeypatch.setattr(sys, "argv", ["panalyzer", "a", "b"])
+    monkeypatch.setattr(sys, "argv", ["panalyzer", "/tmp/demo"])
 
     with pytest.raises(typer.Exit) as exc_info:
         cli.run()
 
     assert exc_info.value.exit_code == 2
     assert outputs[0][1] is True
+    assert "path-based analysis commands were removed" in outputs[0][0]
 
 
-def test_run_defaults_to_current_directory(monkeypatch) -> None:
-    called: list[str] = []
-    monkeypatch.setattr(
-        cli,
-        "analyze_path",
-        lambda path=".", include_all=False: called.append((path, include_all)),
-    )
+def test_run_without_args_prints_help_and_exits(monkeypatch) -> None:
+    outputs: list[str] = []
+    monkeypatch.setattr(cli.typer, "echo", lambda value, err=False: outputs.append(value))
     monkeypatch.setattr(sys, "argv", ["panalyzer"])
 
-    cli.run()
+    with pytest.raises(typer.Exit) as exc_info:
+        cli.run()
 
-    assert called == [(".", False)]
-
-
-def test_run_supports_all_flag_without_path(monkeypatch) -> None:
-    called: list[tuple[str, bool]] = []
-    monkeypatch.setattr(
-        cli,
-        "analyze_path",
-        lambda path=".", include_all=False: called.append((path, include_all)),
-    )
-    monkeypatch.setattr(sys, "argv", ["panalyzer", "-a"])
-
-    cli.run()
-
-    assert called == [(".", True)]
-
-
-def test_run_supports_all_flag_with_path(monkeypatch) -> None:
-    called: list[tuple[str, bool]] = []
-    monkeypatch.setattr(
-        cli,
-        "analyze_path",
-        lambda path=".", include_all=False: called.append((path, include_all)),
-    )
-    monkeypatch.setattr(sys, "argv", ["panalyzer", "--all", "/tmp/demo"])
-
-    cli.run()
-
-    assert called == [("/tmp/demo", True)]
+    assert exc_info.value.exit_code == 0
+    assert outputs[0].startswith("Usage:")

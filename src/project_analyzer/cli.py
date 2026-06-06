@@ -6,7 +6,6 @@ import sys
 import typer
 
 from .runtime import WebAppRuntime
-from .services import ProjectAnalysisService
 
 
 app = typer.Typer(
@@ -56,29 +55,13 @@ def status() -> None:
     typer.echo(f"stopped host={current.host} port={current.port}")
 
 
-def analyze_path(path: str = ".", *, include_all: bool = False) -> None:
-    """Analyze a Python project and print the selected JSON view."""
-
-    root = Path(path).resolve()
-    if not root.exists():
-        typer.echo(f"Error: path does not exist: {root}", err=True)
-        raise typer.Exit(1)
-    if not root.is_dir():
-        typer.echo(f"Error: not a directory: {root}", err=True)
-        raise typer.Exit(1)
-
-    artifacts = ProjectAnalysisService().analyze_project(root)
-    document = artifacts.project if include_all else artifacts.diagram
-    typer.echo(document.model_dump_json(indent=2))
-
-
 def run() -> None:
     """Console entrypoint for the installed command."""
 
     args = sys.argv[1:]
     if not args:
-        analyze_path(".")
-        return
+        typer.echo(_help_text())
+        raise typer.Exit(0)
 
     first = args[0]
     if first in {"start", "stop", "restart", "status"}:
@@ -89,26 +72,13 @@ def run() -> None:
         typer.echo(_help_text())
         return
 
-    include_all = False
-    path: str | None = None
-    for arg in args:
-        if arg in {"-a", "--all"}:
-            include_all = True
-            continue
-        if path is not None:
-            typer.echo("Error: expected at most one path plus optional flags.", err=True)
-            raise typer.Exit(2)
-        path = arg
-
-    analyze_path(path or ".", include_all=include_all)
+    typer.echo("Error: path-based analysis commands were removed. Start the web app and use its project endpoints instead.", err=True)
+    raise typer.Exit(2)
 
 
 def _help_text() -> str:
     return """Usage:
   panalyzer
-  panalyzer <path>
-  panalyzer -a
-  panalyzer -a <path>
   panalyzer start
   panalyzer stop
   panalyzer restart
@@ -121,7 +91,7 @@ Commands:
   status  Report whether the panalyzer web app is running.
 
 Options:
-  -a, --all   Print the full scan model including methods and references.
+  Use the web app project endpoints for scan and structure data.
 """
 
 

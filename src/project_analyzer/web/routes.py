@@ -161,6 +161,15 @@ class WebRoutes:
         )
         return 200, "text/html; charset=utf-8", html.encode("utf-8")
 
+    def list_projects_api(self) -> tuple[int, str, bytes]:
+        payload = json.dumps(
+            {
+                "projects": [self._registered_project_payload(project) for project in self.context.project_service.list_projects()],
+            },
+            indent=2,
+        ).encode("utf-8")
+        return 200, "application/json; charset=utf-8", payload
+
     def add_project(self, body: bytes) -> tuple[int, str, bytes, dict[str, str]]:
         form = parse_qs(body.decode("utf-8"))
         path = form.get("path", [""])[0]
@@ -179,10 +188,9 @@ class WebRoutes:
         return 303, "text/plain; charset=utf-8", b"", {"Location": "/?message=Project+deleted"}
 
     def project_detail(self, project_id: str, created: bool = False) -> tuple[int, str, bytes]:
-        project_context = self.context.project_service.get_project_context(project_id)
-        if project_context is None:
+        project = self.context.project_service.get_project(project_id)
+        if project is None:
             return self.not_found()
-        project = project_context.registration
 
         created_script = ""
         if created:
@@ -236,8 +244,29 @@ class WebRoutes:
         )
         return 200, "text/html; charset=utf-8", html.encode("utf-8")
 
-    def project_graph(self, project_id: str) -> tuple[int, str, bytes]:
-        project_context = self.context.project_service.get_project_context(project_id)
+    def project_structure(self, project_id: str, *, refresh: bool = False) -> tuple[int, str, bytes]:
+        project_context = self.context.project_service.get_project_structure(project_id, refresh=refresh)
+        if project_context is None:
+            return self.not_found()
+        project_root = Path(project_context.registration.path)
+        project_sha: str | None = None
+        try:
+            project_sha = self.context.proposal_service.sha_resolver.current_sha(project_root)
+        except ProposalApplicationError:
+            project_sha = None
+        payload = json.dumps(
+            {
+                "project": self._registered_project_payload(project_context.registration),
+                "project_sha": project_sha,
+                "structure": project_context.analysis.project.model_dump(mode="json"),
+                "diagram": project_context.analysis.diagram.model_dump(mode="json"),
+            },
+            indent=2,
+        ).encode("utf-8")
+        return 200, "application/json; charset=utf-8", payload
+
+    def project_graph(self, project_id: str, *, refresh: bool = False) -> tuple[int, str, bytes]:
+        project_context = self.context.project_service.get_project_context(project_id, refresh=refresh)
         if project_context is None:
             return self.not_found()
         try:
@@ -342,6 +371,13 @@ class WebRoutes:
         if version is None:
             return f"/static/{asset_name}"
         return f"/static/{asset_name}?v={version}"
+
+    def _registered_project_payload(self, project) -> dict[str, str]:
+        return {
+            "id": project.id,
+            "name": project.name,
+            "path": project.path,
+        }
 
     def _page(self, title: str, body: str) -> str:
         return f"""<!DOCTYPE html>
