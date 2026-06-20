@@ -800,7 +800,25 @@ function buildFocusedState(state, focusTarget) {
     keptNodeIds.add(focusTarget.data.target);
   } else {
     const focusType = nodeType(focusTarget.data);
-    if (focusType === "package" || (focusType === "file" && state.summary.mode === "method")) {
+    if (focusType === "package") {
+      const subtreeNodeIds = collectDescendantNodeIds(
+        focusTarget.data.id,
+        childNodeIdsByParent,
+      );
+      for (const nodeId of subtreeNodeIds) {
+        keptNodeIds.add(nodeId);
+      }
+      for (const edge of edges) {
+        const sourceInside = subtreeNodeIds.has(edge.data.source);
+        const targetInside = subtreeNodeIds.has(edge.data.target);
+        if (!sourceInside && !targetInside) {
+          continue;
+        }
+        keptEdgeIds.add(edge.data.id);
+        keptNodeIds.add(edge.data.source);
+        keptNodeIds.add(edge.data.target);
+      }
+    } else if (focusType === "file" && state.summary.mode === "method") {
       const subtreeNodeIds = collectDescendantNodeIds(
         focusTarget.data.id,
         childNodeIdsByParent,
@@ -924,6 +942,9 @@ function buildFocusSummary(mode, nodes, edges, focusData) {
 }
 
 function focusSummaryLabel(data) {
+  if (nodeType(data) === "package") {
+    return `Module dependencies for ${data.label}`;
+  }
   if (nodeType(data) === "file") {
     return `Connected files for ${data.label}`;
   }
